@@ -304,6 +304,9 @@ pub struct UpsertSmcpSessionRequest {
     pub security_context: String,
     pub public_key_b64: String,
     pub security_token: String,
+    pub session_status: Option<crate::domain::SmcpSessionStatus>,
+    pub expires_at: Option<String>,
+    pub allowed_tool_patterns: Option<Vec<String>>,
 }
 
 pub async fn upsert_smcp_session(
@@ -318,6 +321,27 @@ pub async fn upsert_smcp_session(
             security_context: req.security_context,
             public_key_b64: req.public_key_b64,
             security_token: req.security_token,
+            session_status: req
+                .session_status
+                .unwrap_or(crate::domain::SmcpSessionStatus::Active),
+            expires_at: req
+                .expires_at
+                .as_deref()
+                .map(|value| {
+                    chrono::DateTime::parse_from_rfc3339(value)
+                        .map(|ts| ts.with_timezone(&chrono::Utc))
+                        .map_err(|err| {
+                            error_response(GatewayError::Validation(format!(
+                                "invalid expires_at RFC3339 timestamp: {err}"
+                            )))
+                        })
+                })
+                .transpose()?
+                .unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::hours(1)),
+            allowed_tool_patterns: req
+                .allowed_tool_patterns
+                .filter(|patterns| !patterns.is_empty())
+                .unwrap_or_else(|| vec!["*".to_string()]),
         })
         .await
         .map_err(error_response)?;

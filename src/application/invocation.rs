@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use crate::application::{CliEngine, CliInvocation, WorkflowEngine};
 use crate::domain::SmcpEnvelope;
-use crate::domain::{EphemeralCliToolRepository, SmcpSessionRepository, ToolWorkflow, WorkflowId};
+use crate::domain::{
+    EphemeralCliToolRepository, SmcpSessionRepository, SmcpSessionStatus, ToolWorkflow, WorkflowId,
+};
 use crate::infrastructure::config::GatewayConfig;
 use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::smcp::verify_and_extract;
@@ -62,6 +64,19 @@ impl InvocationService {
         )?;
         if call.execution_id != session.execution_id {
             return Err(GatewayError::Unauthorized);
+        }
+        if session.session_status != SmcpSessionStatus::Active {
+            return Err(GatewayError::Unauthorized);
+        }
+        if session.expires_at <= chrono::Utc::now() {
+            return Err(GatewayError::Unauthorized);
+        }
+        if !session
+            .allowed_tool_patterns
+            .iter()
+            .any(|pattern| tool_pattern_matches(pattern, &call.tool_name))
+        {
+            return Err(GatewayError::Forbidden);
         }
 
         if self
@@ -174,6 +189,16 @@ impl InvocationService {
     ) -> Result<Option<ToolWorkflow>, GatewayError> {
         self.workflow_engine.find_workflow_by_id(id).await
     }
+}
+
+fn tool_pattern_matches(pattern: &str, tool_name: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Some((prefix, suffix)) = pattern.split_once('*') {
+        return tool_name.starts_with(prefix) && tool_name.ends_with(suffix);
+    }
+    pattern == tool_name
 }
 
 fn decode_unverified(token: &str) -> Result<serde_json::Value, GatewayError> {

@@ -335,19 +335,25 @@ fn cli_tool_from_row(row: sqlx::postgres::PgRow) -> Result<EphemeralCliTool, Gat
 impl SmcpSessionRepository for PostgresStore {
     async fn save(&self, session: SmcpSessionRecord) -> Result<(), GatewayError> {
         sqlx::query(
-            r#"INSERT INTO smcp_sessions(execution_id, agent_id, security_context, public_key_b64, security_token)
-               VALUES ($1, $2, $3, $4, $5)
+            r#"INSERT INTO smcp_sessions(execution_id, agent_id, security_context, public_key_b64, security_token, session_status, expires_at, allowed_tool_patterns)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                ON CONFLICT (execution_id) DO UPDATE SET
                  agent_id = EXCLUDED.agent_id,
                  security_context = EXCLUDED.security_context,
                  public_key_b64 = EXCLUDED.public_key_b64,
-                 security_token = EXCLUDED.security_token"#,
+                 security_token = EXCLUDED.security_token,
+                 session_status = EXCLUDED.session_status,
+                 expires_at = EXCLUDED.expires_at,
+                 allowed_tool_patterns = EXCLUDED.allowed_tool_patterns"#,
         )
         .bind(session.execution_id)
         .bind(session.agent_id)
         .bind(session.security_context)
         .bind(session.public_key_b64)
         .bind(session.security_token)
+        .bind(serde_json::to_string(&session.session_status)?)
+        .bind(session.expires_at.to_rfc3339())
+        .bind(serde_json::to_string(&session.allowed_tool_patterns)?)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -358,7 +364,7 @@ impl SmcpSessionRepository for PostgresStore {
         execution_id: &str,
     ) -> Result<Option<SmcpSessionRecord>, GatewayError> {
         let row = sqlx::query(
-            "SELECT execution_id,agent_id,security_context,public_key_b64,security_token FROM smcp_sessions WHERE execution_id=$1",
+            "SELECT execution_id,agent_id,security_context,public_key_b64,security_token,session_status,expires_at,allowed_tool_patterns FROM smcp_sessions WHERE execution_id=$1",
         )
         .bind(execution_id)
         .fetch_optional(&self.pool)
@@ -371,6 +377,17 @@ impl SmcpSessionRepository for PostgresStore {
                 security_context: record.try_get("security_context")?,
                 public_key_b64: record.try_get("public_key_b64")?,
                 security_token: record.try_get("security_token")?,
+                session_status: serde_json::from_str(
+                    &record.try_get::<String, _>("session_status")?,
+                )?,
+                expires_at: chrono::DateTime::parse_from_rfc3339(
+                    &record.try_get::<String, _>("expires_at")?,
+                )
+                .map_err(|e| GatewayError::Serialization(e.to_string()))?
+                .with_timezone(&Utc),
+                allowed_tool_patterns: serde_json::from_str(
+                    &record.try_get::<String, _>("allowed_tool_patterns")?,
+                )?,
             })
         })
         .transpose()

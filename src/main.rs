@@ -3,6 +3,7 @@ mod domain;
 mod infrastructure;
 mod presentation;
 
+use chrono::{Duration, Utc};
 use std::sync::Arc;
 
 use axum::middleware;
@@ -78,6 +79,9 @@ async fn main() -> anyhow::Result<()> {
                 security_context: "default".to_string(),
                 public_key_b64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string(),
                 security_token: "dev".to_string(),
+                session_status: domain::SmcpSessionStatus::Active,
+                expires_at: Utc::now() + Duration::hours(1),
+                allowed_tool_patterns: vec!["*".to_string()],
             })
             .await?;
     }
@@ -95,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
     );
     let cli_engine = CliEngine::new(
         cli_tools.clone(),
+        credential_resolver.clone(),
         semantic_gate,
         event_store.clone(),
         config.clone(),

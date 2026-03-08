@@ -4,8 +4,10 @@ use std::time::Instant;
 
 use serde_json::json;
 use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+use crate::application::credential_resolver::{CredentialResolver, RegistryCredentials};
 use crate::application::semantic_gate::{SemanticDecision, SemanticGate};
 use crate::domain::{EphemeralCliToolRepository, GatewayEvent};
 use crate::infrastructure::config::GatewayConfig;
@@ -15,6 +17,7 @@ use crate::infrastructure::persistence::EventStore;
 #[derive(Clone)]
 pub struct CliEngine {
     cli_tools: Arc<dyn EphemeralCliToolRepository>,
+    credential_resolver: CredentialResolver,
     semantic_gate: SemanticGate,
     event_store: Arc<dyn EventStore>,
     nfs_server_host: String,
@@ -34,12 +37,14 @@ pub struct CliInvocation {
 impl CliEngine {
     pub fn new(
         cli_tools: Arc<dyn EphemeralCliToolRepository>,
+        credential_resolver: CredentialResolver,
         semantic_gate: SemanticGate,
         event_store: Arc<dyn EventStore>,
         config: GatewayConfig,
     ) -> Self {
         Self {
             cli_tools,
+            credential_resolver,
             semantic_gate,
             event_store,
             nfs_server_host: config.nfs_server_host,
@@ -86,6 +91,48 @@ impl CliEngine {
             }
             SemanticDecision::Allowed => {}
         }
+
+        let registry_for_logout = if let Some(registry_ref) = &tool.registry_credentials_ref {
+            let creds = match self
+                .credential_resolver
+                .resolve_registry_credentials(registry_ref)
+                .await
+            {
+                Ok(credentials) => {
+                    self.event_store
+                        .append_event(
+                            "CredentialExchangeCompleted",
+                            &serde_json::to_value(GatewayEvent::CredentialExchangeCompleted {
+                                execution_id: invocation.execution_id.clone(),
+                                resolution_path: "static_ref".to_string(),
+                                target_service: "container_registry".to_string(),
+                                completed_at: chrono::Utc::now(),
+                            })?,
+                        )
+                        .await?;
+                    credentials
+                }
+                Err(err) => {
+                    self.event_store
+                        .append_event(
+                            "CredentialExchangeFailed",
+                            &serde_json::to_value(GatewayEvent::CredentialExchangeFailed {
+                                execution_id: invocation.execution_id.clone(),
+                                resolution_path: "static_ref".to_string(),
+                                reason: err.to_string(),
+                                failed_at: chrono::Utc::now(),
+                            })?,
+                        )
+                        .await?;
+                    return Err(err);
+                }
+            };
+
+            docker_login(&creds).await?;
+            Some(creds.registry)
+        } else {
+            None
+        };
 
         self.event_store
             .append_event(
@@ -142,7 +189,7 @@ impl CliEngine {
             .map_err(|e| GatewayError::Internal(format!("failed to spawn docker: {e}")))?;
 
         let timeout = std::time::Duration::from_secs(tool.default_timeout_seconds as u64);
-        let output = tokio::time::timeout(timeout, async move {
+        let run_output = tokio::time::timeout(timeout, async move {
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
             if let Some(mut out) = child.stdout.take() {
@@ -157,7 +204,13 @@ impl CliEngine {
         .await
         .map_err(|_| GatewayError::Internal("cli invocation timeout".to_string()))?;
 
-        let (mut stdout, mut stderr, status_res) = output;
+        if let Some(registry) = registry_for_logout.as_deref() {
+            if let Err(err) = docker_logout(registry).await {
+                tracing::warn!("docker logout failed for registry '{}': {}", registry, err);
+            }
+        }
+
+        let (mut stdout, mut stderr, status_res) = run_output;
         if stdout.len() > 1_048_576 {
             stdout.truncate(1_048_576);
         }
@@ -207,4 +260,68 @@ fn sanitize_volume_name(candidate: &str, fallback: &str) -> String {
         value = fallback.to_string();
     }
     value
+}
+
+async fn docker_login(credentials: &RegistryCredentials) -> Result<(), GatewayError> {
+    let mut cmd = Command::new("docker");
+    cmd.arg("login")
+        .arg(&credentials.registry)
+        .arg("--username")
+        .arg(credentials.username.expose())
+        .arg("--password-stdin")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| GatewayError::Internal(format!("failed to spawn docker login: {e}")))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(credentials.password.expose().as_bytes())
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("failed to write docker login stdin: {e}"))
+            })?;
+        stdin.write_all(b"\n").await.map_err(|e| {
+            GatewayError::Internal(format!("failed to finalize docker login stdin: {e}"))
+        })?;
+    } else {
+        return Err(GatewayError::Internal(
+            "docker login stdin unavailable".to_string(),
+        ));
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| GatewayError::Internal(format!("failed to wait docker login: {e}")))?;
+    if !output.status.success() {
+        return Err(GatewayError::Internal(format!(
+            "docker login failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    Ok(())
+}
+
+async fn docker_logout(registry: &str) -> Result<(), GatewayError> {
+    let output = Command::new("docker")
+        .arg("logout")
+        .arg(registry)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| GatewayError::Internal(format!("failed to spawn docker logout: {e}")))?;
+    if !output.status.success() {
+        return Err(GatewayError::Internal(format!(
+            "docker logout failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    Ok(())
 }

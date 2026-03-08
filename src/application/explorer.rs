@@ -65,10 +65,52 @@ impl ExplorerService {
             .ok_or_else(|| GatewayError::NotFound("operation not found".to_string()))?;
 
         let url = format!("{}{}", spec.base_url.trim_end_matches('/'), operation.path);
-        let headers = self
+        let resolution_path_label = match &spec.credential_path {
+            crate::domain::CredentialResolutionPath::SystemJit { .. } => "system_jit",
+            crate::domain::CredentialResolutionPath::HumanDelegated { .. } => "human_delegated",
+            crate::domain::CredentialResolutionPath::StaticRef(_) => "static_ref",
+        };
+        let target_service = match &spec.credential_path {
+            crate::domain::CredentialResolutionPath::HumanDelegated { target_service } => {
+                target_service.clone()
+            }
+            _ => "unknown".to_string(),
+        };
+
+        let headers = match self
             .credential_resolver
             .resolve(&spec.credential_path, zaru_user_token)
-            .await?;
+            .await
+        {
+            Ok(headers) => {
+                self.event_store
+                    .append_event(
+                        "CredentialExchangeCompleted",
+                        &serde_json::to_value(GatewayEvent::CredentialExchangeCompleted {
+                            execution_id: req.execution_id.clone(),
+                            resolution_path: resolution_path_label.to_string(),
+                            target_service,
+                            completed_at: chrono::Utc::now(),
+                        })?,
+                    )
+                    .await?;
+                headers
+            }
+            Err(err) => {
+                self.event_store
+                    .append_event(
+                        "CredentialExchangeFailed",
+                        &serde_json::to_value(GatewayEvent::CredentialExchangeFailed {
+                            execution_id: req.execution_id.clone(),
+                            resolution_path: resolution_path_label.to_string(),
+                            reason: err.to_string(),
+                            failed_at: chrono::Utc::now(),
+                        })?,
+                    )
+                    .await?;
+                return Err(err);
+            }
+        };
         let (status, response) = self
             .http_client
             .execute(&operation.method, &url, &headers, Some(req.parameters))

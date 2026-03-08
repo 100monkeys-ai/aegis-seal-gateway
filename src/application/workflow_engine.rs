@@ -82,10 +82,51 @@ impl WorkflowEngine {
             .await?
             .ok_or_else(|| GatewayError::NotFound("api spec not found for workflow".to_string()))?;
 
-        let credential_headers = self
+        let resolution_path_label = match &spec.credential_path {
+            crate::domain::CredentialResolutionPath::SystemJit { .. } => "system_jit",
+            crate::domain::CredentialResolutionPath::HumanDelegated { .. } => "human_delegated",
+            crate::domain::CredentialResolutionPath::StaticRef(_) => "static_ref",
+        };
+        let target_service = match &spec.credential_path {
+            crate::domain::CredentialResolutionPath::HumanDelegated { target_service } => {
+                target_service.clone()
+            }
+            _ => "unknown".to_string(),
+        };
+        let credential_headers = match self
             .credential_resolver
             .resolve(&spec.credential_path, zaru_user_token)
-            .await?;
+            .await
+        {
+            Ok(headers) => {
+                self.event_store
+                    .append_event(
+                        "CredentialExchangeCompleted",
+                        &serde_json::to_value(GatewayEvent::CredentialExchangeCompleted {
+                            execution_id: execution_id.to_string(),
+                            resolution_path: resolution_path_label.to_string(),
+                            target_service,
+                            completed_at: chrono::Utc::now(),
+                        })?,
+                    )
+                    .await?;
+                headers
+            }
+            Err(err) => {
+                self.event_store
+                    .append_event(
+                        "CredentialExchangeFailed",
+                        &serde_json::to_value(GatewayEvent::CredentialExchangeFailed {
+                            execution_id: execution_id.to_string(),
+                            resolution_path: resolution_path_label.to_string(),
+                            reason: err.to_string(),
+                            failed_at: chrono::Utc::now(),
+                        })?,
+                    )
+                    .await?;
+                return Err(err);
+            }
+        };
 
         let mut state = HashMap::<String, Value>::new();
         state.insert("input".to_string(), input);
@@ -115,7 +156,12 @@ impl WorkflowEngine {
             let url = format!("{}{}", spec.base_url.trim_end_matches('/'), op.path);
             let step_result = self
                 .http_client
-                .execute(&op.method, &url, &credential_headers, Some(body_value))
+                .execute(
+                    &op.method,
+                    &url,
+                    &credential_headers,
+                    Some(body_value.clone()),
+                )
                 .await;
 
             match step_result {
@@ -153,7 +199,12 @@ impl WorkflowEngine {
                                 attempt += 1;
                                 if let Ok((_, response)) = self
                                     .http_client
-                                    .execute(&op.method, &url, &credential_headers, None)
+                                    .execute(
+                                        &op.method,
+                                        &url,
+                                        &credential_headers,
+                                        Some(body_value.clone()),
+                                    )
                                     .await
                                 {
                                     last_response = response;

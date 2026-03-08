@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::domain::{
     ApiSpec, ApiSpecId, ApiSpecSummary, EphemeralCliTool, EphemeralCliToolSummary, ToolWorkflow,
@@ -48,4 +50,14 @@ pub struct SmcpSessionRecord {
     pub security_context: String,
     pub public_key_b64: String,
     pub security_token: String,
+    pub session_status: SmcpSessionStatus,
+    pub expires_at: DateTime<Utc>,
+    pub allowed_tool_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SmcpSessionStatus {
+    Active,
+    Expired,
+    Revoked,
 }

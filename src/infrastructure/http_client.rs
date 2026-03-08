@@ -1,6 +1,7 @@
 use reqwest::Method;
 use serde_json::Value;
 
+use crate::domain::SensitiveString;
 use crate::infrastructure::errors::GatewayError;
 
 #[derive(Clone)]
@@ -21,7 +22,7 @@ impl HttpClient {
         &self,
         method: &str,
         url: &str,
-        headers: &[(String, String)],
+        headers: &[(String, SensitiveString)],
         body: Option<Value>,
     ) -> Result<(u16, Value), GatewayError> {
         let parsed_method = Method::from_bytes(method.as_bytes())
@@ -29,7 +30,7 @@ impl HttpClient {
 
         let mut req = self.client.request(parsed_method, url);
         for (k, v) in headers {
-            req = req.header(k, v);
+            req = req.header(k, v.expose());
         }
         if let Some(payload) = body {
             req = req.json(&payload);

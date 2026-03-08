@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS smcp_sessions (
   agent_id TEXT NOT NULL,
   security_context TEXT NOT NULL,
   public_key_b64 TEXT NOT NULL,
-  security_token TEXT NOT NULL
+  security_token TEXT NOT NULL,
+  session_status TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  allowed_tool_patterns TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS gateway_events (

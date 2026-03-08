@@ -1,6 +1,7 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 
-use crate::domain::CredentialResolutionPath;
+use crate::domain::{CredentialRef, CredentialResolutionPath, SensitiveString};
 use crate::infrastructure::config::GatewayConfig;
 use crate::infrastructure::errors::GatewayError;
 
@@ -8,6 +9,13 @@ use crate::infrastructure::errors::GatewayError;
 pub struct CredentialResolver {
     config: GatewayConfig,
     http_client: reqwest::Client,
+}
+
+#[derive(Clone)]
+pub struct RegistryCredentials {
+    pub registry: String,
+    pub username: SensitiveString,
+    pub password: SensitiveString,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,7 +50,7 @@ impl CredentialResolver {
         &self,
         path: &CredentialResolutionPath,
         zaru_user_token: Option<&str>,
-    ) -> Result<Vec<(String, String)>, GatewayError> {
+    ) -> Result<Vec<(String, SensitiveString)>, GatewayError> {
         match path {
             CredentialResolutionPath::SystemJit {
                 openbao_engine_path,
@@ -62,7 +70,7 @@ impl CredentialResolver {
         &self,
         openbao_engine_path: &str,
         role: &str,
-    ) -> Result<Vec<(String, String)>, GatewayError> {
+    ) -> Result<Vec<(String, SensitiveString)>, GatewayError> {
         let openbao_addr = self.config.openbao_addr.as_deref().ok_or_else(|| {
             GatewayError::Internal("SMCP_GATEWAY_OPENBAO_ADDR is required".to_string())
         })?;
@@ -115,11 +123,70 @@ impl CredentialResolver {
 
         Ok(vec![(
             "Authorization".to_string(),
-            format!("Bearer {token}"),
+            SensitiveString::new(format!("Bearer {token}")),
         )])
     }
 
-    async fn resolve_static_ref(&self, key: &str) -> Result<Vec<(String, String)>, GatewayError> {
+    async fn resolve_static_ref(
+        &self,
+        key: &str,
+    ) -> Result<Vec<(String, SensitiveString)>, GatewayError> {
+        let fields = self.fetch_kv_fields(key).await?;
+        let token = fields
+            .get("token")
+            .cloned()
+            .or_else(|| fields.get("value").cloned())
+            .ok_or_else(|| {
+                GatewayError::Serialization(
+                    "OpenBao KV response missing token/value field".to_string(),
+                )
+            })?;
+
+        Ok(vec![(
+            "Authorization".to_string(),
+            SensitiveString::new(format!("Bearer {token}")),
+        )])
+    }
+
+    pub async fn resolve_registry_credentials(
+        &self,
+        reference: &CredentialRef,
+    ) -> Result<RegistryCredentials, GatewayError> {
+        let fields = self.fetch_kv_fields(&reference.key).await?;
+        let registry = fields
+            .get("registry")
+            .cloned()
+            .or_else(|| fields.get("server").cloned())
+            .or_else(|| fields.get("host").cloned())
+            .unwrap_or_else(|| "index.docker.io".to_string());
+        let username = fields
+            .get("username")
+            .cloned()
+            .or_else(|| fields.get("user").cloned())
+            .ok_or_else(|| {
+                GatewayError::Serialization(
+                    "OpenBao registry credential missing username/user field".to_string(),
+                )
+            })?;
+        let password = fields
+            .get("password")
+            .cloned()
+            .or_else(|| fields.get("token").cloned())
+            .or_else(|| fields.get("value").cloned())
+            .ok_or_else(|| {
+                GatewayError::Serialization(
+                    "OpenBao registry credential missing password/token/value field".to_string(),
+                )
+            })?;
+
+        Ok(RegistryCredentials {
+            registry,
+            username: SensitiveString::new(username),
+            password: SensitiveString::new(password),
+        })
+    }
+
+    async fn fetch_kv_fields(&self, key: &str) -> Result<HashMap<String, String>, GatewayError> {
         if key.trim().is_empty() {
             return Err(GatewayError::Validation(
                 "StaticRef key cannot be empty".to_string(),
@@ -158,32 +225,18 @@ impl CredentialResolver {
             GatewayError::Serialization(format!("invalid OpenBao KV response: {err}"))
         })?;
 
-        let token = payload
-            .data
-            .and_then(|data| data.data)
-            .and_then(|fields| {
-                fields
-                    .get("token")
-                    .cloned()
-                    .or_else(|| fields.get("value").cloned())
-            })
-            .ok_or_else(|| {
-                GatewayError::Serialization(
-                    "OpenBao KV response missing token/value field".to_string(),
-                )
-            })?;
-
-        Ok(vec![(
-            "Authorization".to_string(),
-            format!("Bearer {token}"),
-        )])
+        payload.data.and_then(|data| data.data).ok_or_else(|| {
+            GatewayError::Serialization(
+                "OpenBao KV response missing nested data object".to_string(),
+            )
+        })
     }
 
     async fn resolve_human_delegated(
         &self,
         target_service: &str,
         zaru_user_token: Option<&str>,
-    ) -> Result<Vec<(String, String)>, GatewayError> {
+    ) -> Result<Vec<(String, SensitiveString)>, GatewayError> {
         if target_service.trim().is_empty() {
             return Err(GatewayError::Validation(
                 "human delegated target_service cannot be empty".to_string(),
@@ -253,7 +306,7 @@ impl CredentialResolver {
 
         Ok(vec![(
             "Authorization".to_string(),
-            format!("Bearer {}", payload.access_token),
+            SensitiveString::new(format!("Bearer {}", payload.access_token)),
         )])
     }
 }

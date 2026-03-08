@@ -37,3 +37,23 @@ pub fn parse_operations(raw_spec: &Value) -> Result<HashMap<String, OperationSpe
 
     Ok(operations)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_operation_ids_from_paths() {
+        let spec = serde_json::json!({
+            "paths": {
+                "/repos": {
+                    "post": { "operationId": "createRepo" }
+                }
+            }
+        });
+        let operations = parse_operations(&spec).expect("should parse");
+        let operation = operations.get("createRepo").expect("operation present");
+        assert_eq!(operation.method, "POST");
+        assert_eq!(operation.path, "/repos");
+    }
+}

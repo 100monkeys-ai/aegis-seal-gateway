@@ -28,7 +28,7 @@ impl CredentialResolver {
                 )])
             }
             CredentialResolutionPath::HumanDelegated { target_service } => {
-                let token = zaru_user_token.ok_or_else(|| GatewayError::Unauthorized)?;
+                let token = zaru_user_token.ok_or(GatewayError::Unauthorized)?;
                 let header_name = format!("X-Delegated-{}-Token", target_service);
                 Ok(vec![(header_name, token.to_string())])
             }

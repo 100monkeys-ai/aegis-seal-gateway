@@ -5,7 +5,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    ApiSpec, ApiSpecId, CredentialResolutionPath, EphemeralCliTool, ToolWorkflow, WorkflowId,
+    ApiSpec, ApiSpecId, CredentialResolutionPath, EphemeralCliTool, GatewayEvent,
+    SmcpSessionRecord, ToolWorkflow, WorkflowId,
 };
 use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::openapi::parse_operations;
@@ -67,7 +68,22 @@ pub async fn register_spec(
     .map_err(error_response)?;
 
     let id = spec.id;
+    let name = spec.name.clone();
     state.specs.save(spec).await.map_err(error_response)?;
+    state
+        .audit_store
+        .append_event(
+            "ApiSpecRegistered",
+            &serde_json::to_value(GatewayEvent::ApiSpecRegistered {
+                spec_id: id,
+                name,
+                registered_by: "operator".to_string(),
+                registered_at: chrono::Utc::now(),
+            })
+            .map_err(|e| error_response(GatewayError::Serialization(e.to_string())))?,
+        )
+        .await
+        .map_err(error_response)?;
 
     Ok(Json(json!({"id": id.0.to_string()})))
 }
@@ -129,9 +145,26 @@ pub async fn register_workflow(
     )
     .map_err(error_response)?;
     let id = workflow.id;
+    let step_count = workflow.steps.len();
+    let name = workflow.name.clone();
     state
         .workflows
         .save(workflow)
+        .await
+        .map_err(error_response)?;
+    state
+        .audit_store
+        .append_event(
+            "WorkflowRegistered",
+            &serde_json::to_value(GatewayEvent::WorkflowRegistered {
+                workflow_id: id,
+                name,
+                step_count,
+                registered_by: "operator".to_string(),
+                registered_at: chrono::Utc::now(),
+            })
+            .map_err(|e| error_response(GatewayError::Serialization(e.to_string())))?,
+        )
         .await
         .map_err(error_response)?;
     Ok(Json(json!({"id": id.0.to_string()})))
@@ -200,7 +233,22 @@ pub async fn register_cli_tool(
         registry_credentials_ref: req.registry_credentials_ref,
     };
     tool.validate().map_err(error_response)?;
+    let event_name = tool.name.clone();
+    let event_image = tool.docker_image.clone();
     state.cli_tools.save(tool).await.map_err(error_response)?;
+    state
+        .audit_store
+        .append_event(
+            "CliToolRegistered",
+            &serde_json::to_value(GatewayEvent::CliToolRegistered {
+                name: event_name,
+                docker_image: event_image,
+                registered_at: chrono::Utc::now(),
+            })
+            .map_err(|e| error_response(GatewayError::Serialization(e.to_string())))?,
+        )
+        .await
+        .map_err(error_response)?;
     Ok(Json(json!({"saved": true})))
 }
 
@@ -229,23 +277,72 @@ pub async fn list_tools(
     let workflows = state.workflows.list_all().await.map_err(error_response)?;
     let cli_tools = state.cli_tools.list_all().await.map_err(error_response)?;
 
-    let workflow_tools = workflows.into_iter().map(|wf| {
-        json!({
-            "name": wf.name,
-            "description": wf.description,
-            "kind": "workflow"
-        })
-    });
+    let mut workflow_tools = Vec::new();
+    for wf in workflows {
+        let full = state
+            .workflows
+            .find_by_name(&wf.name)
+            .await
+            .map_err(error_response)?;
+        if let Some(workflow) = full {
+            workflow_tools.push(json!({
+                "name": workflow.name,
+                "description": workflow.description,
+                "kind": "workflow",
+                "input_schema": workflow.input_schema
+            }));
+        }
+    }
+
     let cli_tools = cli_tools.into_iter().map(|tool| {
         json!({
             "name": tool.name,
             "description": tool.description,
-            "kind": "cli"
+            "kind": "cli",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "subcommand": { "type": "string" },
+                    "args": { "type": "array", "items": { "type": "string" } },
+                    "workspace_path": { "type": "string" }
+                },
+                "required": ["subcommand"]
+            }
         })
     });
 
-    let all = workflow_tools.chain(cli_tools).collect::<Vec<_>>();
+    let all = workflow_tools
+        .into_iter()
+        .chain(cli_tools)
+        .collect::<Vec<_>>();
     Ok(Json(json!(all)))
+}
+
+#[derive(Deserialize)]
+pub struct UpsertSmcpSessionRequest {
+    pub execution_id: String,
+    pub agent_id: String,
+    pub security_context: String,
+    pub public_key_b64: String,
+    pub security_token: String,
+}
+
+pub async fn upsert_smcp_session(
+    State(state): State<AppState>,
+    Json(req): Json<UpsertSmcpSessionRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    state
+        .smcp_sessions
+        .save(SmcpSessionRecord {
+            execution_id: req.execution_id,
+            agent_id: req.agent_id,
+            security_context: req.security_context,
+            public_key_b64: req.public_key_b64,
+            security_token: req.security_token,
+        })
+        .await
+        .map_err(error_response)?;
+    Ok(Json(json!({"saved": true})))
 }
 
 fn parse_api_spec_id(input: &str) -> Result<ApiSpecId, GatewayError> {

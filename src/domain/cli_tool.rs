@@ -47,3 +47,36 @@ pub struct EphemeralCliToolSummary {
     pub docker_image: String,
     pub allowed_subcommands: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_tool_timeout_must_be_bounded() {
+        let tool = EphemeralCliTool {
+            name: "terraform".to_string(),
+            description: "infra".to_string(),
+            docker_image: "mcp/terraform:1.9".to_string(),
+            allowed_subcommands: vec!["plan".to_string()],
+            require_semantic_judge: true,
+            default_timeout_seconds: 301,
+            registry_credentials_ref: None,
+        };
+        assert!(tool.validate().is_err());
+    }
+
+    #[test]
+    fn cli_tool_requires_subcommands() {
+        let tool = EphemeralCliTool {
+            name: "terraform".to_string(),
+            description: "infra".to_string(),
+            docker_image: "mcp/terraform:1.9".to_string(),
+            allowed_subcommands: Vec::new(),
+            require_semantic_judge: true,
+            default_timeout_seconds: 60,
+            registry_credentials_ref: None,
+        };
+        assert!(tool.validate().is_err());
+    }
+}

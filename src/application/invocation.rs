@@ -51,7 +51,7 @@ impl InvocationService {
             .smcp_sessions
             .find_by_execution_id(execution_id)
             .await?
-            .ok_or_else(|| GatewayError::Unauthorized)?;
+            .ok_or(GatewayError::Unauthorized)?;
 
         let call = verify_and_extract(
             &envelope,

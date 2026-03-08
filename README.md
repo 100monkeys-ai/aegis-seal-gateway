@@ -25,6 +25,7 @@ Standalone SMCP tooling gateway implementing ADR-053.
 - `POST /v1/cli-tools`
 - `GET /v1/cli-tools`
 - `DELETE /v1/cli-tools/{name}`
+- `POST /v1/smcp/sessions`
 - `GET /v1/tools`
 - `POST /v1/explorer`
 - `POST /v1/invoke`

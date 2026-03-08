@@ -84,6 +84,8 @@ async fn main() -> anyhow::Result<()> {
         specs,
         workflows,
         cli_tools,
+        smcp_sessions: Arc::new(store.clone()),
+        audit_store: store.clone(),
         invocation_service: invocation,
         explorer_service: explorer,
     };
@@ -100,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/v1/cli-tools", post(register_cli_tool).get(list_cli_tools))
         .route("/v1/cli-tools/{name}", delete(delete_cli_tool))
+        .route("/v1/smcp/sessions", post(upsert_smcp_session))
         .route("/v1/tools", get(list_tools))
         .route("/v1/explorer", post(explore_api))
         .layer(middleware::from_fn_with_state(

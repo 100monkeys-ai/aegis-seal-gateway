@@ -90,3 +90,39 @@ pub struct ToolWorkflowSummary {
     pub name: String,
     pub description: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ApiSpecId;
+
+    #[test]
+    fn workflow_requires_non_empty_steps() {
+        let result = ToolWorkflow::new(
+            "name".to_string(),
+            "desc".to_string(),
+            serde_json::json!({"type":"object"}),
+            ApiSpecId::new(),
+            Vec::new(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn workflow_requires_object_schema() {
+        let result = ToolWorkflow::new(
+            "name".to_string(),
+            "desc".to_string(),
+            serde_json::json!({"type":"string"}),
+            ApiSpecId::new(),
+            vec![WorkflowStep {
+                name: "s1".to_string(),
+                operation_id: "op".to_string(),
+                body_template: "{}".to_string(),
+                extractors: std::collections::HashMap::new(),
+                on_error: StepErrorPolicy::AbortWorkflow,
+            }],
+        );
+        assert!(result.is_err());
+    }
+}

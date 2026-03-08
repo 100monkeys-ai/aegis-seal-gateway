@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026 100monkeys.ai
+
+name: Publish crates.io
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Perform a dry run (no actual publishing)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare proto files for packaging
+        run: |
+          mkdir -p proto-vendor/aegis
+          if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
+            cp aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+          fi
+
+      - name: Verify crate builds
+        run: cargo build --locked
+
+      - name: Run tests
+        run: cargo test --locked
+
+  publish:
+    name: Publish aegis-smcp-gateway
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare proto files for packaging
+        run: |
+          mkdir -p proto-vendor/aegis
+          if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
+            cp aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+          fi
+
+      - name: Publish crate
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            echo "🔍 DRY RUN: Would publish aegis-smcp-gateway"
+            cargo publish --locked --dry-run --token ${{ secrets.CRATES_TOKEN }}
+          else
+            echo "📦 Publishing aegis-smcp-gateway to crates.io..."
+            cargo publish --locked --token ${{ secrets.CRATES_TOKEN }}
+          fi
+
+  publish-docs:
+    name: Publish documentation to docs.rs
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare proto files for packaging
+        run: |
+          mkdir -p proto-vendor/aegis
+          if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
+            cp aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+          fi
+
+      - name: Generate documentation
+        run: |
+          RUSTDOCFLAGS="--cfg docsrs" cargo doc --locked --no-deps --document-private-items
+
+      - name: Log documentation URL
+        run: |
+          echo "📚 Documentation will be available at:"
+          echo "  - https://docs.rs/aegis-smcp-gateway"
+          echo ""
+          echo "Note: docs.rs automatically publishes documentation after crates.io publish"
+
+  publish-summary:
+    name: Publish Summary
+    needs: [publish, publish-docs]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check publish status
+        run: |
+          echo "✅ Publishing workflow completed"
+          echo "📦 Published package: aegis-smcp-gateway"
+          echo "🔗 Crates.io: https://crates.io/crates/aegis-smcp-gateway"
+          echo "🔗 Docs.rs: https://docs.rs/aegis-smcp-gateway"

@@ -1,6 +1,6 @@
 # aegis-smcp-gateway
 
-Standalone SMCP tooling gateway implementing ADR-053.
+Standalone SMCP tooling gateway.
 
 ## Features
 

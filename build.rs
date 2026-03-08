@@ -6,8 +6,19 @@ fn main() {
     }
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let proto_dir = std::path::Path::new(&manifest_dir).join("aegis-proto/proto");
-    let proto_file = proto_dir.join("smcp_gateway.proto");
+    let manifest_path = std::path::Path::new(&manifest_dir);
+    let vendored_dir = manifest_path.join("proto-vendor").join("aegis");
+    let vendored_proto = vendored_dir.join("smcp_gateway.proto");
+    let submodule_dir = manifest_path.join("aegis-proto").join("proto");
+    let submodule_proto = submodule_dir.join("smcp_gateway.proto");
+
+    let (proto_dir, proto_file) = if submodule_proto.exists() {
+        (submodule_dir, submodule_proto)
+    } else if vendored_proto.exists() {
+        (vendored_dir, vendored_proto)
+    } else {
+        panic!("smcp_gateway.proto not found in proto-vendor/aegis or aegis-proto/proto");
+    };
 
     tonic_build::configure()
         .build_server(true)

@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026 100monkeys.ai
+
+name: Verify Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'README.md'
+      - 'build.rs'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'README.md'
+      - 'build.rs'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: "--cfg docsrs -D warnings"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-docs:
+    name: Verify Documentation Builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare proto files for docs build
+        run: |
+          mkdir -p proto-vendor/aegis
+          cp aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+
+      - name: Build documentation
+        run: |
+          cargo doc --locked --no-deps --document-private-items -p aegis-smcp-gateway
+
+      - name: Verify documentation
+        run: |
+          echo "✅ Documentation built successfully"
+          echo "📚 docs.rs will publish at: https://docs.rs/aegis-smcp-gateway"

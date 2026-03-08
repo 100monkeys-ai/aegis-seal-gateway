@@ -1,6 +1,8 @@
 FROM rust:1.88-bookworm AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+COPY aegis-proto ./aegis-proto
 COPY src ./src
 RUN cargo build --release
 

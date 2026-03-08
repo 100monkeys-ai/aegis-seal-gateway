@@ -350,3 +350,133 @@ async fn docker_logout(registry: &str) -> Result<(), GatewayError> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use tokio::sync::RwLock;
+
+    use crate::domain::{
+        CredentialResolutionPath, EphemeralCliTool, EphemeralCliToolRepository,
+        EphemeralCliToolSummary,
+    };
+    use crate::infrastructure::persistence::EventStore;
+
+    #[derive(Default)]
+    struct InMemoryCliToolRepo {
+        tools: RwLock<HashMap<String, EphemeralCliTool>>,
+    }
+
+    #[async_trait]
+    impl EphemeralCliToolRepository for InMemoryCliToolRepo {
+        async fn save(&self, tool: EphemeralCliTool) -> Result<(), GatewayError> {
+            self.tools.write().await.insert(tool.name.clone(), tool);
+            Ok(())
+        }
+
+        async fn find_by_name(&self, name: &str) -> Result<Option<EphemeralCliTool>, GatewayError> {
+            Ok(self.tools.read().await.get(name).cloned())
+        }
+
+        async fn list_all(&self) -> Result<Vec<EphemeralCliToolSummary>, GatewayError> {
+            Ok(self
+                .tools
+                .read()
+                .await
+                .values()
+                .map(|tool| EphemeralCliToolSummary {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    docker_image: tool.docker_image.clone(),
+                    allowed_subcommands: tool.allowed_subcommands.clone(),
+                })
+                .collect())
+        }
+
+        async fn delete(&self, name: &str) -> Result<(), GatewayError> {
+            self.tools.write().await.remove(name);
+            Ok(())
+        }
+    }
+
+    struct NoopEventStore;
+
+    #[async_trait]
+    impl EventStore for NoopEventStore {
+        async fn append_event(
+            &self,
+            _event_type: &str,
+            _payload: &serde_json::Value,
+        ) -> Result<(), GatewayError> {
+            Ok(())
+        }
+    }
+
+    fn test_config() -> GatewayConfig {
+        GatewayConfig {
+            bind_addr: "127.0.0.1:8089".to_string(),
+            grpc_bind_addr: "127.0.0.1:50055".to_string(),
+            database_url: "sqlite::memory:".to_string(),
+            operator_jwt_public_key_pem: String::new(),
+            operator_jwt_issuer: "issuer".to_string(),
+            operator_jwt_audience: "audience".to_string(),
+            auth_disabled: true,
+            smcp_jwt_public_key_pem: String::new(),
+            smcp_jwt_issuer: "smcp-issuer".to_string(),
+            smcp_jwt_audience: "smcp-audience".to_string(),
+            openbao_addr: None,
+            openbao_token: None,
+            openbao_kv_mount: "secret".to_string(),
+            keycloak_token_exchange_url: None,
+            keycloak_client_id: None,
+            keycloak_client_secret: None,
+            semantic_judge_url: None,
+            nfs_server_host: "127.0.0.1".to_string(),
+            nfs_port: 2049,
+            nfs_mount_port: 20048,
+        }
+    }
+
+    #[tokio::test]
+    async fn cli_registry_human_delegated_rejected_without_context_capability() {
+        let repo = Arc::new(InMemoryCliToolRepo::default());
+        repo.save(EphemeralCliTool {
+            name: "terraform".to_string(),
+            description: "infra cli".to_string(),
+            docker_image: "mcp/terraform:1.9".to_string(),
+            allowed_subcommands: vec!["plan".to_string()],
+            require_semantic_judge: false,
+            default_timeout_seconds: 30,
+            registry_credential_path: Some(CredentialResolutionPath::HumanDelegated {
+                target_service: "ghcr.io".to_string(),
+            }),
+        })
+        .await
+        .expect("seed tool");
+
+        let engine = CliEngine::new(
+            repo,
+            CredentialResolver::new(test_config()),
+            SemanticGate::new(None),
+            Arc::new(NoopEventStore),
+            test_config(),
+        );
+
+        let result = engine
+            .invoke(CliInvocation {
+                execution_id: "exec-1".to_string(),
+                security_context: "zaru-free".to_string(),
+                tool_name: "terraform".to_string(),
+                command: "plan".to_string(),
+                args: vec![],
+                fsal_volume_id: "vol-1".to_string(),
+                zaru_user_token: Some("user-token".to_string()),
+                allow_human_delegated_credentials: false,
+            })
+            .await;
+
+        assert!(matches!(result, Err(GatewayError::Forbidden)));
+    }
+}

@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::application::{ExplorerService, InvocationService};
 use crate::domain::{
-    ApiSpecRepository, EphemeralCliToolRepository, SmcpSessionRepository, ToolWorkflowRepository,
+    ApiSpecRepository, EphemeralCliToolRepository, SecurityContextRepository,
+    SmcpSessionRepository, ToolWorkflowRepository,
 };
 use crate::infrastructure::config::GatewayConfig;
 use crate::infrastructure::persistence::EventStore;
@@ -14,6 +15,7 @@ pub struct AppState {
     pub workflows: Arc<dyn ToolWorkflowRepository>,
     pub cli_tools: Arc<dyn EphemeralCliToolRepository>,
     pub smcp_sessions: Arc<dyn SmcpSessionRepository>,
+    pub security_contexts: Arc<dyn SecurityContextRepository>,
     pub audit_store: Arc<dyn EventStore>,
     pub invocation_service: InvocationService,
     pub explorer_service: ExplorerService,

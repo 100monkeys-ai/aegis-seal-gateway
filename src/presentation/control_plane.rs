@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::domain::{
     ApiSpec, ApiSpecId, CredentialResolutionPath, EphemeralCliTool, GatewayEvent,
-    SmcpSessionRecord, ToolWorkflow, WorkflowId,
+    SecurityCapabilities, SecurityContext, SmcpSessionRecord, ToolWorkflow, WorkflowId,
 };
 use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::openapi::parse_operations;
@@ -346,6 +346,68 @@ pub async fn upsert_smcp_session(
         .await
         .map_err(error_response)?;
     Ok(Json(json!({"saved": true})))
+}
+
+#[derive(Deserialize)]
+pub struct UpsertSecurityContextRequest {
+    pub name: String,
+    pub allow_workflow_tools: bool,
+    pub allow_cli_tools: bool,
+    pub allow_explorer: bool,
+    pub allow_human_delegated_credentials: bool,
+}
+
+pub async fn upsert_security_context(
+    State(state): State<AppState>,
+    Json(req): Json<UpsertSecurityContextRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if req.name.trim().is_empty() {
+        return Err(error_response(GatewayError::Validation(
+            "security context name cannot be empty".to_string(),
+        )));
+    }
+    state
+        .security_contexts
+        .save(SecurityContext {
+            name: req.name,
+            capabilities: SecurityCapabilities {
+                allow_workflow_tools: req.allow_workflow_tools,
+                allow_cli_tools: req.allow_cli_tools,
+                allow_explorer: req.allow_explorer,
+                allow_human_delegated_credentials: req.allow_human_delegated_credentials,
+            },
+        })
+        .await
+        .map_err(error_response)?;
+    Ok(Json(json!({"saved": true})))
+}
+
+pub async fn list_security_contexts(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let list = state
+        .security_contexts
+        .list_all()
+        .await
+        .map_err(error_response)?;
+    Ok(Json(json!(list)))
+}
+
+pub async fn get_security_context(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let context = state
+        .security_contexts
+        .find_by_name(&name)
+        .await
+        .map_err(error_response)?;
+    match context {
+        Some(value) => Ok(Json(json!(value))),
+        None => Err(error_response(GatewayError::NotFound(
+            "security context not found".to_string(),
+        ))),
+    }
 }
 
 async fn validate_workflow_steps_against_spec(

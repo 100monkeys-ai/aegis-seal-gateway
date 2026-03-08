@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
         cli_engine,
         cli_tools.clone(),
         smcp_sessions.clone(),
-        security_contexts,
+        security_contexts.clone(),
         config.clone(),
     );
 
@@ -135,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
         workflows,
         cli_tools,
         smcp_sessions: smcp_sessions.clone(),
+        security_contexts: security_contexts.clone(),
         audit_store: event_store,
         invocation_service: invocation,
         explorer_service: explorer,
@@ -153,6 +154,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/cli-tools", post(register_cli_tool).get(list_cli_tools))
         .route("/v1/cli-tools/{name}", delete(delete_cli_tool))
         .route("/v1/smcp/sessions", post(upsert_smcp_session))
+        .route(
+            "/v1/security-contexts",
+            post(upsert_security_context).get(list_security_contexts),
+        )
+        .route("/v1/security-contexts/{name}", get(get_security_context))
         .route("/v1/tools", get(list_tools))
         .route("/v1/explorer", post(explore_api))
         .layer(middleware::from_fn_with_state(

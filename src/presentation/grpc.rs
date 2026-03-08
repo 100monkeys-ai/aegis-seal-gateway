@@ -23,31 +23,37 @@ impl GatewayGrpcService {
 
     #[allow(clippy::result_large_err)]
     fn require_operator_metadata(&self, metadata: &MetadataMap) -> Result<(), Status> {
-        if self.state.config.auth_disabled {
-            return Ok(());
-        }
-
-        let auth = metadata
-            .get("authorization")
-            .and_then(|value| value.to_str().ok())
-            .ok_or_else(|| Status::unauthenticated("missing authorization metadata"))?;
-        let token = auth
-            .strip_prefix("Bearer ")
-            .or_else(|| auth.strip_prefix("bearer "))
-            .ok_or_else(|| Status::unauthenticated("invalid bearer metadata"))?;
-
-        verify_operator_token(&self.state.config, token).map_err(|status| match status {
-            axum::http::StatusCode::UNAUTHORIZED => {
-                Status::unauthenticated("operator token validation failed")
-            }
-            axum::http::StatusCode::FORBIDDEN => {
-                Status::permission_denied("operator role required")
-            }
-            _ => Status::internal("operator auth failure"),
-        })?;
-
-        Ok(())
+        require_operator_metadata_for_config(&self.state.config, metadata)
     }
+}
+
+#[allow(clippy::result_large_err)]
+fn require_operator_metadata_for_config(
+    config: &crate::infrastructure::config::GatewayConfig,
+    metadata: &MetadataMap,
+) -> Result<(), Status> {
+    if config.auth_disabled {
+        return Ok(());
+    }
+
+    let auth = metadata
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| Status::unauthenticated("missing authorization metadata"))?;
+    let token = auth
+        .strip_prefix("Bearer ")
+        .or_else(|| auth.strip_prefix("bearer "))
+        .ok_or_else(|| Status::unauthenticated("invalid bearer metadata"))?;
+
+    verify_operator_token(config, token).map_err(|status| match status {
+        axum::http::StatusCode::UNAUTHORIZED => {
+            Status::unauthenticated("operator token validation failed")
+        }
+        axum::http::StatusCode::FORBIDDEN => Status::permission_denied("operator role required"),
+        _ => Status::internal("operator auth failure"),
+    })?;
+
+    Ok(())
 }
 
 #[tonic::async_trait]
@@ -428,4 +434,51 @@ fn invalid(err: crate::infrastructure::errors::GatewayError) -> Status {
 
 fn internal(err: crate::infrastructure::errors::GatewayError) -> Status {
     Status::internal(err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::config::GatewayConfig;
+
+    fn test_config(auth_disabled: bool) -> GatewayConfig {
+        GatewayConfig {
+            bind_addr: "127.0.0.1:8089".to_string(),
+            grpc_bind_addr: "127.0.0.1:50055".to_string(),
+            database_url: "sqlite::memory:".to_string(),
+            operator_jwt_public_key_pem: String::new(),
+            operator_jwt_issuer: "issuer".to_string(),
+            operator_jwt_audience: "audience".to_string(),
+            auth_disabled,
+            smcp_jwt_public_key_pem: String::new(),
+            smcp_jwt_issuer: "smcp-issuer".to_string(),
+            smcp_jwt_audience: "smcp-audience".to_string(),
+            openbao_addr: None,
+            openbao_token: None,
+            openbao_kv_mount: "secret".to_string(),
+            keycloak_token_exchange_url: None,
+            keycloak_client_id: None,
+            keycloak_client_secret: None,
+            semantic_judge_url: None,
+            nfs_server_host: "127.0.0.1".to_string(),
+            nfs_port: 2049,
+            nfs_mount_port: 20048,
+        }
+    }
+
+    #[test]
+    fn operator_authz_rejects_missing_metadata() {
+        let config = test_config(false);
+        let metadata = MetadataMap::new();
+        let result = require_operator_metadata_for_config(&config, &metadata);
+        assert!(matches!(result, Err(status) if status.code() == tonic::Code::Unauthenticated));
+    }
+
+    #[test]
+    fn operator_authz_bypasses_when_disabled() {
+        let config = test_config(true);
+        let metadata = MetadataMap::new();
+        let result = require_operator_metadata_for_config(&config, &metadata);
+        assert!(result.is_ok());
+    }
 }

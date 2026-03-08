@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
+use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::Row;
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::domain::{
@@ -19,7 +21,27 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     pub async fn new(database_url: &str) -> Result<Self, GatewayError> {
-        let pool = sqlx::SqlitePool::connect(database_url).await?;
+        // Ensure the parent directory exists before connecting.
+        // SQLite cannot create intermediate directories itself; a missing parent
+        // causes SQLITE_CANTOPEN (error code 14) even with create_if_missing.
+        let db_path_str = database_url
+            .strip_prefix("sqlite://")
+            .unwrap_or(database_url);
+        if let Some(parent) = std::path::Path::new(db_path_str).parent() {
+            if parent.components().count() > 0 {
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    GatewayError::Internal(format!(
+                        "failed to create database directory '{}': {e}",
+                        parent.display()
+                    ))
+                })?;
+            }
+        }
+
+        let connect_options = SqliteConnectOptions::from_str(database_url)
+            .map_err(|e| GatewayError::Database(e.to_string()))?
+            .create_if_missing(true);
+        let pool = sqlx::SqlitePool::connect_with(connect_options).await?;
         sqlx::query(include_str!("schema.sql"))
             .execute(&pool)
             .await?;

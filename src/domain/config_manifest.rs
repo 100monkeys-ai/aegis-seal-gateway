@@ -183,8 +183,39 @@ impl Default for GatewayUiConfig {
 impl SmcpGatewayConfigManifest {
     pub fn from_yaml_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config = serde_yaml::from_str(&content)?;
+        let mut config: Self = serde_yaml::from_str(&content)?;
+        config.resolve_env_refs();
         Ok(config)
+    }
+
+    /// Resolve `"env:VAR_NAME"` references in string fields.
+    ///
+    /// Any config field whose YAML value starts with `env:` is treated as a
+    /// reference to an environment variable.  If the variable is set and
+    /// non-empty the field is substituted in-place; if it is unset or empty the
+    /// field is cleared to `""` / `None`.  `apply_env_overrides` then runs
+    /// immediately after and can still fill required fields in from the same
+    /// env vars (e.g. `SMCP_GATEWAY_DB` sets `database.url` in both paths).
+    ///
+    /// This mirrors the `env:` interpolation pattern used by `aegis-config.yaml`.
+    pub fn resolve_env_refs(&mut self) {
+        resolve_env_string(&mut self.spec.network.bind_addr);
+        resolve_env_string(&mut self.spec.network.grpc_bind_addr);
+        resolve_env_string(&mut self.spec.database.url);
+        resolve_env_string(&mut self.spec.auth.operator_jwt_public_key_pem);
+        resolve_env_string(&mut self.spec.auth.operator_jwt_issuer);
+        resolve_env_string(&mut self.spec.auth.operator_jwt_audience);
+        resolve_env_string(&mut self.spec.auth.smcp_jwt_public_key_pem);
+        resolve_env_string(&mut self.spec.auth.smcp_jwt_issuer);
+        resolve_env_string(&mut self.spec.auth.smcp_jwt_audience);
+        resolve_env_option(&mut self.spec.credentials.openbao_addr);
+        resolve_env_option(&mut self.spec.credentials.openbao_token);
+        resolve_env_string(&mut self.spec.credentials.openbao_kv_mount);
+        resolve_env_option(&mut self.spec.credentials.keycloak_token_exchange_url);
+        resolve_env_option(&mut self.spec.credentials.keycloak_client_id);
+        resolve_env_option(&mut self.spec.credentials.keycloak_client_secret);
+        resolve_env_option(&mut self.spec.cli.semantic_judge_url);
+        resolve_env_string(&mut self.spec.cli.nfs_server_host);
     }
 
     pub fn discover_config() -> Option<PathBuf> {
@@ -385,6 +416,39 @@ fn default_nfs_mount_port() -> u16 {
 }
 fn default_ui_enabled() -> bool {
     true
+}
+
+/// Resolve an `"env:VAR_NAME"` reference inline, modifying `s` in place.
+///
+/// - If `s` starts with `"env:"` and the variable is set and non-empty: substitute.
+/// - If `s` starts with `"env:"` and the variable is unset/empty: clear to `""`
+///   so that `apply_env_overrides` (which runs after) can still fill it in from
+///   the same variable, and so `validate()` catches genuinely missing required
+///   fields with a useful error message.
+/// - If `s` does not start with `"env:"`: leave unchanged.
+///
+/// This mirrors the `env:` interpolation pattern used by `aegis-config.yaml`.
+fn resolve_env_string(s: &mut String) {
+    if let Some(var_name) = s.strip_prefix("env:") {
+        match std::env::var(var_name) {
+            Ok(value) if !value.trim().is_empty() => *s = value,
+            _ => s.clear(),
+        }
+    }
+}
+
+/// Same as `resolve_env_string` but for `Option<String>` fields.
+/// A YAML `"env:VAR_NAME"` value becomes `Some(resolved)` when the variable is
+/// set, or `None` when the variable is unset/empty.
+fn resolve_env_option(opt: &mut Option<String>) {
+    if let Some(s) = opt.as_deref() {
+        if let Some(var_name) = s.strip_prefix("env:") {
+            match std::env::var(var_name) {
+                Ok(value) if !value.trim().is_empty() => *opt = Some(value),
+                _ => *opt = None,
+            }
+        }
+    }
 }
 
 #[cfg(test)]

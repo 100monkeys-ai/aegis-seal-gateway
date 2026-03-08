@@ -75,10 +75,10 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
             echo "🔍 DRY RUN: Would publish aegis-smcp-gateway"
-            cargo publish --locked --dry-run --token ${{ secrets.CRATES_TOKEN }}
+            cargo publish --locked --allow-dirty --dry-run --token ${{ secrets.CRATES_TOKEN }}
           else
             echo "📦 Publishing aegis-smcp-gateway to crates.io..."
-            cargo publish --locked --token ${{ secrets.CRATES_TOKEN }}
+            cargo publish --locked --allow-dirty --token ${{ secrets.CRATES_TOKEN }}
           fi
 
   publish-docs:

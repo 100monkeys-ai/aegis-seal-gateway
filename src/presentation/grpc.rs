@@ -21,6 +21,7 @@ impl GatewayGrpcService {
         Self { state }
     }
 
+    #[allow(clippy::result_large_err)]
     fn require_operator_metadata(&self, metadata: &MetadataMap) -> Result<(), Status> {
         if self.state.config.auth_disabled {
             return Ok(());

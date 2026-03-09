@@ -3,7 +3,7 @@ use std::sync::Arc;
 use base64::Engine;
 use serde_json::Value;
 
-use crate::application::{CliEngine, CliInvocation, WorkflowEngine};
+use crate::application::{CliEngine, CliFsalMount, CliInvocation, WorkflowEngine};
 use crate::domain::SmcpEnvelope;
 use crate::domain::{
     EphemeralCliToolRepository, SecurityContextRepository, SmcpSessionRepository,
@@ -115,14 +115,7 @@ impl InvocationService {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let fsal_volume_id = call
-                .arguments
-                .get("fsal_volume_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    GatewayError::Validation("CLI invocation requires fsal_volume_id".to_string())
-                })?
-                .to_string();
+            let fsal_mounts = parse_fsal_mounts(&call.arguments)?;
 
             self.cli_engine
                 .invoke(CliInvocation {
@@ -131,7 +124,7 @@ impl InvocationService {
                     tool_name: call.tool_name,
                     command,
                     args,
-                    fsal_volume_id,
+                    fsal_mounts,
                     zaru_user_token: zaru_user_token.map(ToString::to_string),
                     allow_human_delegated_credentials: security_context
                         .capabilities
@@ -190,13 +183,7 @@ impl InvocationService {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let fsal_volume_id = args
-                .get("fsal_volume_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    GatewayError::Validation("CLI invocation requires fsal_volume_id".to_string())
-                })?
-                .to_string();
+            let fsal_mounts = parse_fsal_mounts(&args)?;
 
             self.cli_engine
                 .invoke(CliInvocation {
@@ -205,7 +192,7 @@ impl InvocationService {
                     tool_name: tool_name.to_string(),
                     command,
                     args: cli_args,
-                    fsal_volume_id,
+                    fsal_mounts,
                     zaru_user_token: zaru_user_token.map(ToString::to_string),
                     allow_human_delegated_credentials: security_context
                         .capabilities
@@ -258,4 +245,45 @@ fn decode_unverified(token: &str) -> Result<serde_json::Value, GatewayError> {
         .map_err(|e| GatewayError::Smcp(format!("invalid JWT payload encoding: {e}")))?;
     let value: serde_json::Value = serde_json::from_slice(&payload)?;
     Ok(value)
+}
+
+fn parse_fsal_mounts(args: &Value) -> Result<Vec<CliFsalMount>, GatewayError> {
+    let mounts = args
+        .get("fsal_mounts")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            GatewayError::Validation("CLI invocation requires fsal_mounts array".to_string())
+        })?;
+    let parsed = mounts
+        .iter()
+        .map(|entry| {
+            let volume_id = entry
+                .get("volume_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    GatewayError::Validation("fsal_mounts[].volume_id is required".to_string())
+                })?;
+            let mount_path = entry
+                .get("mount_path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    GatewayError::Validation("fsal_mounts[].mount_path is required".to_string())
+                })?;
+            let read_only = entry
+                .get("read_only")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(CliFsalMount {
+                volume_id: volume_id.to_string(),
+                mount_path: mount_path.to_string(),
+                read_only,
+            })
+        })
+        .collect::<Result<Vec<CliFsalMount>, GatewayError>>()?;
+    if parsed.is_empty() {
+        return Err(GatewayError::Validation(
+            "CLI invocation requires at least one fsal mount".to_string(),
+        ));
+    }
+    Ok(parsed)
 }

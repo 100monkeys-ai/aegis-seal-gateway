@@ -31,9 +31,16 @@ pub struct CliInvocation {
     pub tool_name: String,
     pub command: String,
     pub args: Vec<String>,
-    pub fsal_volume_id: String,
+    pub fsal_mounts: Vec<CliFsalMount>,
     pub zaru_user_token: Option<String>,
     pub allow_human_delegated_credentials: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct CliFsalMount {
+    pub volume_id: String,
+    pub mount_path: String,
+    pub read_only: bool,
 }
 
 impl CliEngine {
@@ -166,24 +173,29 @@ impl CliEngine {
             .arg("no-new-privileges")
             .arg("--cap-drop")
             .arg("ALL");
-        let volume_source = sanitize_volume_name(
-            &format!(
-                "aegis-cli-{}-{}",
-                invocation.execution_id, invocation.fsal_volume_id
-            ),
-            "aegis-cli-workspace",
-        );
-        cmd.arg("--mount")
-            .arg(format!(
-                "type=volume,src={volume_source},dst=/workspace,volume-driver=local,volume-opt=type=nfs,volume-opt=o=addr={},nfsvers=3,proto=tcp,port={},mountport={},soft,timeo=10,nolock,volume-opt=device=:/{}/{}",
+        if invocation.fsal_mounts.is_empty() {
+            return Err(GatewayError::Validation(
+                "CLI invocation requires at least one fsal mount".to_string(),
+            ));
+        }
+        for mount in &invocation.fsal_mounts {
+            let volume_source = sanitize_volume_name(
+                &format!("aegis-cli-{}-{}", invocation.execution_id, mount.volume_id),
+                "aegis-cli-workspace",
+            );
+            let readonly_suffix = if mount.read_only { ",ro" } else { "" };
+            cmd.arg("--mount").arg(format!(
+                "type=volume,src={volume_source},dst={},volume-driver=local,volume-opt=type=nfs,volume-opt=o=addr={},nfsvers=3,proto=tcp,port={},mountport={},soft,timeo=10,nolock{},volume-opt=device=:/{}/{}",
+                mount.mount_path,
                 self.nfs_server_host,
                 self.nfs_port,
                 self.nfs_mount_port,
+                readonly_suffix,
                 invocation.execution_id,
-                invocation.fsal_volume_id
-            ))
-            .arg("-w")
-            .arg("/workspace");
+                mount.volume_id
+            ));
+        }
+        cmd.arg("-w").arg("/workspace");
 
         cmd.arg(&tool.docker_image)
             .arg(&invocation.command)
@@ -472,7 +484,11 @@ mod tests {
                 tool_name: "terraform".to_string(),
                 command: "plan".to_string(),
                 args: vec![],
-                fsal_volume_id: "vol-1".to_string(),
+                fsal_mounts: vec![CliFsalMount {
+                    volume_id: "vol-1".to_string(),
+                    mount_path: "/workspace".to_string(),
+                    read_only: false,
+                }],
                 zaru_user_token: Some("user-token".to_string()),
                 allow_human_delegated_credentials: false,
             })

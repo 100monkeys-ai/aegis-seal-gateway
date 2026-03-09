@@ -233,10 +233,21 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         request: Request<proto::InvokeCliRequest>,
     ) -> Result<Response<proto::InvokeCliResponse>, Status> {
         let req = request.into_inner();
+        let fsal_mounts = req
+            .fsal_mounts
+            .into_iter()
+            .map(|mount| {
+                serde_json::json!({
+                    "volume_id": mount.volume_id,
+                    "mount_path": mount.mount_path,
+                    "read_only": mount.read_only,
+                })
+            })
+            .collect::<Vec<Value>>();
         let args = serde_json::json!({
             "subcommand": req.subcommand,
             "args": req.args,
-            "fsal_volume_id": req.fsal_volume_id,
+            "fsal_mounts": fsal_mounts,
         });
 
         let result = self

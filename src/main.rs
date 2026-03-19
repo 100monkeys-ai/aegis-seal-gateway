@@ -32,8 +32,10 @@ use presentation::grpc::proto::gateway_invocation_service_server::GatewayInvocat
 use presentation::grpc::proto::tool_workflow_service_server::ToolWorkflowServiceServer;
 use presentation::grpc::GatewayGrpcService;
 use presentation::invocation::*;
+use presentation::openapi::openapi_spec;
 use presentation::state::AppState;
 use presentation::ui;
+use utoipa_swagger_ui::SwaggerUi;
 
 type RepositoryBundle = (
     Arc<dyn ApiSpecRepository>,
@@ -168,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
         ));
 
     let mut app = Router::new()
+        .merge(SwaggerUi::new("/api-docs").url("/openapi.json", openapi_spec()))
         .merge(operator_routes)
         .route("/v1/invoke", post(invoke_smcp))
         .route("/health", get(|| async { "ok" }))
@@ -202,6 +205,19 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/workflows/{id}",
+    tag = "Workflows",
+    params(("id" = String, Path, description = "Workflow UUID")),
+    request_body = RegisterWorkflowRequest,
+    responses(
+        (status = 200, description = "Workflow updated"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 async fn update_workflow(
     axum::extract::State(state): axum::extract::State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,

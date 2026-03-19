@@ -9,12 +9,13 @@ use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::http_client::HttpClient;
 use crate::infrastructure::persistence::EventStore;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ApiExplorerRequest {
     pub execution_id: String,
+    #[schema(value_type = String, format = "uuid")]
     pub api_spec_id: ApiSpecId,
     pub operation_id: String,
-    pub parameters: Value,
+    pub parameters: serde_json::Value,
     pub fields: Vec<String>,
     pub include_hateoas_hints: bool,
 }

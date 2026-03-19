@@ -39,7 +39,7 @@ Standalone SMCP tooling gateway.
 The gateway uses a Kubernetes-style YAML manifest:
 
 - File name: `smcp-gateway-config.yaml`
-- API version: `100monkeys.ai/v1`
+- API version: `smcp.100monkeys.ai/v1`
 - Kind: `SmcpGatewayConfig`
 
 Discovery order:
@@ -54,7 +54,7 @@ Environment variables are supported as runtime overrides (same names as before).
 ### YAML Example
 
 ```yaml
-apiVersion: 100monkeys.ai/v1
+apiVersion: smcp.100monkeys.ai/v1
 kind: SmcpGatewayConfig
 metadata:
   name: aegis-smcp-gateway

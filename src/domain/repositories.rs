@@ -63,7 +63,7 @@ pub struct SmcpSessionRecord {
     pub allowed_tool_patterns: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 pub enum SmcpSessionStatus {
     Active,
     Expired,

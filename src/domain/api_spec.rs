@@ -85,12 +85,12 @@ pub struct ApiSpecSummary {
     pub source_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CredentialRef {
     pub key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum CredentialResolutionPath {
     SystemJit {
         openbao_engine_path: String,

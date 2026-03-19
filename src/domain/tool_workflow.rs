@@ -68,7 +68,7 @@ impl ToolWorkflow {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct WorkflowStep {
     pub name: String,
     pub operation_id: String,
@@ -77,7 +77,7 @@ pub struct WorkflowStep {
     pub on_error: StepErrorPolicy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum StepErrorPolicy {
     AbortWorkflow,
     Continue,

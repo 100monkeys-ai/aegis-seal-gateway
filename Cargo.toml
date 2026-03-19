@@ -43,6 +43,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.15", features = ["v4", "serde"] }
 tonic = { version = "0.13", features = ["transport"] }
 prost = "0.13"
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 [build-dependencies]
 tonic-build = "0.13"

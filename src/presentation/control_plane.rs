@@ -12,7 +12,7 @@ use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::openapi::parse_operations;
 use crate::presentation::state::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct RegisterSpecRequest {
     pub name: String,
     pub base_url: String,
@@ -21,6 +21,19 @@ pub struct RegisterSpecRequest {
     pub source_fetch_url: Option<String>,
     pub credential_path: CredentialResolutionPath,
 }
+
+#[utoipa::path(
+    post,
+    path = "/v1/specs",
+    tag = "API Specs",
+    request_body = RegisterSpecRequest,
+    responses(
+        (status = 200, description = "Spec registered"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 
 pub async fn register_spec(
     State(state): State<AppState>,
@@ -87,6 +100,16 @@ pub async fn register_spec(
     Ok(Json(json!({"id": id.0.to_string()})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/specs",
+    tag = "API Specs",
+    responses(
+        (status = 200, description = "List of registered API specs"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn list_specs(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -94,6 +117,18 @@ pub async fn list_specs(
     Ok(Json(json!(specs)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/specs/{id}",
+    tag = "API Specs",
+    params(("id" = String, Path, description = "API spec UUID")),
+    responses(
+        (status = 200, description = "API spec details"),
+        (status = 404, description = "Not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn get_spec(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -112,6 +147,17 @@ pub async fn get_spec(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/specs/{id}",
+    tag = "API Specs",
+    params(("id" = String, Path, description = "API spec UUID")),
+    responses(
+        (status = 200, description = "Deleted"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn delete_spec(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -121,7 +167,7 @@ pub async fn delete_spec(
     Ok(Json(json!({"deleted": true})))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct RegisterWorkflowRequest {
     pub name: String,
     pub description: String,
@@ -130,6 +176,18 @@ pub struct RegisterWorkflowRequest {
     pub steps: Vec<crate::domain::WorkflowStep>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/workflows",
+    tag = "Workflows",
+    request_body = RegisterWorkflowRequest,
+    responses(
+        (status = 200, description = "Workflow registered"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn register_workflow(
     State(state): State<AppState>,
     Json(req): Json<RegisterWorkflowRequest>,
@@ -170,6 +228,16 @@ pub async fn register_workflow(
     Ok(Json(json!({"id": id.0.to_string()})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/workflows",
+    tag = "Workflows",
+    responses(
+        (status = 200, description = "List of registered workflows"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn list_workflows(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -177,6 +245,18 @@ pub async fn list_workflows(
     Ok(Json(json!(list)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/workflows/{id}",
+    tag = "Workflows",
+    params(("id" = String, Path, description = "Workflow UUID")),
+    responses(
+        (status = 200, description = "Workflow details"),
+        (status = 404, description = "Not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn get_workflow(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -195,6 +275,17 @@ pub async fn get_workflow(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/workflows/{id}",
+    tag = "Workflows",
+    params(("id" = String, Path, description = "Workflow UUID")),
+    responses(
+        (status = 200, description = "Deleted"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn delete_workflow(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -208,7 +299,7 @@ pub async fn delete_workflow(
     Ok(Json(json!({"deleted": true})))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct RegisterCliToolRequest {
     pub name: String,
     pub description: String,
@@ -219,6 +310,18 @@ pub struct RegisterCliToolRequest {
     pub registry_credential_path: Option<crate::domain::CredentialResolutionPath>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/cli-tools",
+    tag = "CLI Tools",
+    request_body = RegisterCliToolRequest,
+    responses(
+        (status = 200, description = "CLI tool registered"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn register_cli_tool(
     State(state): State<AppState>,
     Json(req): Json<RegisterCliToolRequest>,
@@ -252,6 +355,16 @@ pub async fn register_cli_tool(
     Ok(Json(json!({"saved": true})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/cli-tools",
+    tag = "CLI Tools",
+    responses(
+        (status = 200, description = "List of registered CLI tools"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn list_cli_tools(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -259,6 +372,17 @@ pub async fn list_cli_tools(
     Ok(Json(json!(list)))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/cli-tools/{name}",
+    tag = "CLI Tools",
+    params(("name" = String, Path, description = "CLI tool name")),
+    responses(
+        (status = 200, description = "Deleted"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn delete_cli_tool(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -271,6 +395,16 @@ pub async fn delete_cli_tool(
     Ok(Json(json!({"deleted": true})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/tools",
+    tag = "Tools",
+    responses(
+        (status = 200, description = "LLM-facing tool listing (name + description only)"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn list_tools(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -297,7 +431,7 @@ pub async fn list_tools(
     Ok(Json(json!(all)))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpsertSmcpSessionRequest {
     pub execution_id: String,
     pub agent_id: String,
@@ -309,6 +443,18 @@ pub struct UpsertSmcpSessionRequest {
     pub allowed_tool_patterns: Option<Vec<String>>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/smcp/sessions",
+    tag = "SMCP Sessions",
+    request_body = UpsertSmcpSessionRequest,
+    responses(
+        (status = 200, description = "Session saved"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn upsert_smcp_session(
     State(state): State<AppState>,
     Json(req): Json<UpsertSmcpSessionRequest>,
@@ -348,7 +494,7 @@ pub async fn upsert_smcp_session(
     Ok(Json(json!({"saved": true})))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpsertSecurityContextRequest {
     pub name: String,
     pub allow_workflow_tools: bool,
@@ -357,6 +503,18 @@ pub struct UpsertSecurityContextRequest {
     pub allow_human_delegated_credentials: bool,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/security-contexts",
+    tag = "Security Contexts",
+    request_body = UpsertSecurityContextRequest,
+    responses(
+        (status = 200, description = "Security context saved"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn upsert_security_context(
     State(state): State<AppState>,
     Json(req): Json<UpsertSecurityContextRequest>,
@@ -382,6 +540,16 @@ pub async fn upsert_security_context(
     Ok(Json(json!({"saved": true})))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/security-contexts",
+    tag = "Security Contexts",
+    responses(
+        (status = 200, description = "List of security contexts"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn list_security_contexts(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -393,6 +561,18 @@ pub async fn list_security_contexts(
     Ok(Json(json!(list)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/security-contexts/{name}",
+    tag = "Security Contexts",
+    params(("name" = String, Path, description = "Security context name")),
+    responses(
+        (status = 200, description = "Security context details"),
+        (status = 404, description = "Not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn get_security_context(
     State(state): State<AppState>,
     Path(name): Path<String>,

@@ -105,7 +105,7 @@ pub struct GatewayUiConfig {
 impl Default for SmcpGatewayConfigManifest {
     fn default() -> Self {
         Self {
-            api_version: "100monkeys.ai/v1".to_string(),
+            api_version: "smcp.100monkeys.ai/v1".to_string(),
             kind: "SmcpGatewayConfig".to_string(),
             metadata: ConfigMetadata {
                 name: "aegis-smcp-gateway".to_string(),
@@ -356,9 +356,9 @@ impl SmcpGatewayConfigManifest {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.api_version != "100monkeys.ai/v1" {
+        if self.api_version != "smcp.100monkeys.ai/v1" {
             anyhow::bail!(
-                "Invalid apiVersion: '{}'. Must be '100monkeys.ai/v1'",
+                "Invalid apiVersion: '{}'. Must be 'smcp.100monkeys.ai/v1'",
                 self.api_version
             );
         }
@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn parses_yaml_manifest() {
         let yaml = r#"
-apiVersion: 100monkeys.ai/v1
+apiVersion: smcp.100monkeys.ai/v1
 kind: SmcpGatewayConfig
 metadata:
   name: test-gateway

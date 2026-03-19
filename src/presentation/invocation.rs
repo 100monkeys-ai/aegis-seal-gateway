@@ -8,6 +8,17 @@ use crate::domain::SmcpEnvelope;
 use crate::presentation::control_plane::error_response;
 use crate::presentation::state::AppState;
 
+#[utoipa::path(
+    post,
+    path = "/v1/invoke",
+    tag = "Invocation",
+    request_body = SmcpEnvelope,
+    responses(
+        (status = 200, description = "Invocation result"),
+        (status = 400, description = "Validation / policy error"),
+        (status = 401, description = "SMCP signature verification failed"),
+    ),
+)]
 pub async fn invoke_smcp(
     State(state): State<AppState>,
     Json(envelope): Json<SmcpEnvelope>,
@@ -20,6 +31,18 @@ pub async fn invoke_smcp(
     Ok(Json(json!({"result": result})))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/explorer",
+    tag = "Explorer",
+    request_body = ApiExplorerRequest,
+    responses(
+        (status = 200, description = "Sliced API exploration response"),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_jwt" = [])),
+)]
 pub async fn explore_api(
     State(state): State<AppState>,
     Json(req): Json<ApiExplorerRequest>,

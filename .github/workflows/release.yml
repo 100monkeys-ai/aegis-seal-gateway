@@ -65,7 +65,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: aegis-smcp-gateway-linux-x86_64
-          path: aegis-smcp-gateway-linux-x86_64.tar.gz
+          path: aegis-smcp-gateway/aegis-smcp-gateway-linux-x86_64.tar.gz
+          if-no-files-found: error
           retention-days: 1
 
   build-macos:
@@ -110,7 +111,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: aegis-smcp-gateway-macos-aarch64
-          path: aegis-smcp-gateway-macos-aarch64.tar.gz
+          path: aegis-smcp-gateway/aegis-smcp-gateway-macos-aarch64.tar.gz
+          if-no-files-found: error
           retention-days: 1
 
   create-release:

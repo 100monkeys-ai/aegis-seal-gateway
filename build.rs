@@ -1,6 +1,6 @@
 fn main() {
     let protoc = protoc_bin_vendored::protoc_bin_path().expect("failed to locate protoc");
-    // SAFETY: build scripts run single-process for this crate and setting PROTOC is required by tonic-build.
+    // SAFETY: build scripts run single-process for this crate and setting PROTOC is required by tonic-prost-build.
     unsafe {
         std::env::set_var("PROTOC", protoc);
     }
@@ -20,7 +20,7 @@ fn main() {
         panic!("smcp_gateway.proto not found in proto-vendor/aegis or aegis-proto/proto");
     };
 
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_server(true)
         .build_client(false)
         .compile_protos(

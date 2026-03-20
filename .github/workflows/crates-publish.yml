@@ -25,10 +25,20 @@ jobs:
   verify:
     name: Verify build and tests
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aegis-smcp-gateway
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout gateway
+        uses: actions/checkout@v6
         with:
-          submodules: recursive
+          path: aegis-smcp-gateway
+
+      - name: Checkout proto repo
+        uses: actions/checkout@v6
+        with:
+          repository: 100monkeys-ai/aegis-proto
+          path: aegis-proto
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -40,7 +50,7 @@ jobs:
         run: |
           mkdir -p proto-vendor/aegis
           if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
-            cp aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+            cp ../aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
           fi
 
       - name: Verify crate builds
@@ -53,10 +63,20 @@ jobs:
     name: Publish aegis-smcp-gateway
     needs: verify
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aegis-smcp-gateway
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout gateway
+        uses: actions/checkout@v6
         with:
-          submodules: recursive
+          path: aegis-smcp-gateway
+
+      - name: Checkout proto repo
+        uses: actions/checkout@v6
+        with:
+          repository: 100monkeys-ai/aegis-proto
+          path: aegis-proto
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -68,7 +88,7 @@ jobs:
         run: |
           mkdir -p proto-vendor/aegis
           if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
-            cp aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+            cp ../aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
           fi
 
       - name: Publish crate
@@ -85,10 +105,20 @@ jobs:
     name: Publish documentation to docs.rs
     needs: publish
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aegis-smcp-gateway
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout gateway
+        uses: actions/checkout@v6
         with:
-          submodules: recursive
+          path: aegis-smcp-gateway
+
+      - name: Checkout proto repo
+        uses: actions/checkout@v6
+        with:
+          repository: 100monkeys-ai/aegis-proto
+          path: aegis-proto
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -100,7 +130,7 @@ jobs:
         run: |
           mkdir -p proto-vendor/aegis
           if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
-            cp aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+            cp ../aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
           fi
 
       - name: Generate documentation

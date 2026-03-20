@@ -24,10 +24,16 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout
+      - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          submodules: recursive
+          path: aegis-smcp-gateway
+
+      - name: Checkout proto repo
+        uses: actions/checkout@v6
+        with:
+          repository: 100monkeys-ai/aegis-proto
+          path: aegis-proto
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -55,7 +61,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile
+          file: aegis-smcp-gateway/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -31,10 +31,20 @@ jobs:
   verify-docs:
     name: Verify Documentation Builds
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aegis-smcp-gateway
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout gateway
+        uses: actions/checkout@v6
         with:
-          submodules: recursive
+          path: aegis-smcp-gateway
+
+      - name: Checkout proto repo
+        uses: actions/checkout@v6
+        with:
+          repository: 100monkeys-ai/aegis-proto
+          path: aegis-proto
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -45,7 +55,7 @@ jobs:
       - name: Prepare proto files for docs build
         run: |
           mkdir -p proto-vendor/aegis
-          cp aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+          cp ../aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
 
       - name: Build documentation
         run: |

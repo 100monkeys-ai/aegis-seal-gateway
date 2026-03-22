@@ -1,6 +1,6 @@
 [package]
 name = "aegis-smcp-gateway"
-version = "0.13.0-pre-alpha"
+version = "0.14.0-pre-alpha"
 edition = "2021"
 rust-version = "1.75"
 authors = ["100monkeys AI, Inc."]
@@ -41,7 +41,7 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.15", features = ["v4", "serde"] }
-aegis_orchestrator_proto = { version = "0.13.0-pre-alpha", path = "../aegis-proto", package = "aegis-orchestrator-proto" }
+aegis_orchestrator_proto = { version = "0.14.0-pre-alpha", path = "../aegis-proto", package = "aegis-orchestrator-proto" }
 tonic = { version = "0.14", features = ["transport"] }
 prost = "0.14"
 prost-types = "0.14"

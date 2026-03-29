@@ -89,6 +89,7 @@ pub struct ToolWorkflowSummary {
     pub id: WorkflowId,
     pub name: String,
     pub description: String,
+    pub input_schema: serde_json::Value,
 }
 
 #[cfg(test)]

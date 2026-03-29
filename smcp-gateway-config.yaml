@@ -30,6 +30,7 @@ spec:
     keycloak_client_secret: null
 
   cli:
+    container_cli: null
     semantic_judge_url: null
     nfs_server_host: "127.0.0.1"
     nfs_port: 2049

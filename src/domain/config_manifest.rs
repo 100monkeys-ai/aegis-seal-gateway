@@ -87,6 +87,8 @@ pub struct GatewayCredentialsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayCliConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_cli: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic_judge_url: Option<String>,
     #[serde(default = "default_nfs_server_host")]
     pub nfs_server_host: String,
@@ -164,6 +166,7 @@ impl Default for GatewayCredentialsConfig {
 impl Default for GatewayCliConfig {
     fn default() -> Self {
         Self {
+            container_cli: None,
             semantic_judge_url: None,
             nfs_server_host: default_nfs_server_host(),
             nfs_port: default_nfs_port(),
@@ -214,6 +217,7 @@ impl SmcpGatewayConfigManifest {
         resolve_env_option(&mut self.spec.credentials.keycloak_token_exchange_url);
         resolve_env_option(&mut self.spec.credentials.keycloak_client_id);
         resolve_env_option(&mut self.spec.credentials.keycloak_client_secret);
+        resolve_env_option(&mut self.spec.cli.container_cli);
         resolve_env_option(&mut self.spec.cli.semantic_judge_url);
         resolve_env_string(&mut self.spec.cli.nfs_server_host);
     }
@@ -331,6 +335,11 @@ impl SmcpGatewayConfigManifest {
         }
         if let Ok(value) = std::env::var("SMCP_GATEWAY_KEYCLOAK_CLIENT_SECRET") {
             self.spec.credentials.keycloak_client_secret = Some(value);
+        }
+        if let Ok(value) = std::env::var("SMCP_GATEWAY_CONTAINER_CLI") {
+            if !value.trim().is_empty() {
+                self.spec.cli.container_cli = Some(value);
+            }
         }
         if let Ok(value) = std::env::var("SMCP_GATEWAY_SEMANTIC_JUDGE_URL") {
             self.spec.cli.semantic_judge_url = Some(value);

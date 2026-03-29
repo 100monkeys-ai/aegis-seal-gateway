@@ -20,6 +20,7 @@ pub struct CliEngine {
     credential_resolver: CredentialResolver,
     semantic_gate: SemanticGate,
     event_store: Arc<dyn EventStore>,
+    container_cli: String,
     nfs_server_host: String,
     nfs_port: u16,
     nfs_mount_port: u16,
@@ -56,6 +57,7 @@ impl CliEngine {
             credential_resolver,
             semantic_gate,
             event_store,
+            container_cli: config.container_cli,
             nfs_server_host: config.nfs_server_host,
             nfs_port: config.nfs_port,
             nfs_mount_port: config.nfs_mount_port,
@@ -143,7 +145,7 @@ impl CliEngine {
                 }
             };
 
-            docker_login(&creds).await?;
+            container_login(&self.container_cli, &creds).await?;
             Some(creds.registry)
         } else {
             None
@@ -163,7 +165,7 @@ impl CliEngine {
             )
             .await?;
 
-        let mut cmd = Command::new("docker");
+        let mut cmd = Command::new(&self.container_cli);
         cmd.arg("run")
             .arg("--rm")
             .arg("--network")
@@ -206,7 +208,7 @@ impl CliEngine {
         let start = Instant::now();
         let mut child = cmd
             .spawn()
-            .map_err(|e| GatewayError::Internal(format!("failed to spawn docker: {e}")))?;
+            .map_err(|e| GatewayError::Internal(format!("failed to spawn container cli: {e}")))?;
 
         let timeout = std::time::Duration::from_secs(tool.default_timeout_seconds as u64);
         let run_output = tokio::time::timeout(timeout, async move {
@@ -225,8 +227,12 @@ impl CliEngine {
         .map_err(|_| GatewayError::Internal("cli invocation timeout".to_string()))?;
 
         if let Some(registry) = registry_for_logout.as_deref() {
-            if let Err(err) = docker_logout(registry).await {
-                tracing::warn!("docker logout failed for registry '{}': {}", registry, err);
+            if let Err(err) = container_logout(&self.container_cli, registry).await {
+                tracing::warn!(
+                    "container logout failed for registry '{}': {}",
+                    registry,
+                    err
+                );
             }
         }
 
@@ -299,8 +305,11 @@ fn sanitize_volume_name(candidate: &str, fallback: &str) -> String {
     value
 }
 
-async fn docker_login(credentials: &RegistryCredentials) -> Result<(), GatewayError> {
-    let mut cmd = Command::new("docker");
+async fn container_login(
+    container_cli: &str,
+    credentials: &RegistryCredentials,
+) -> Result<(), GatewayError> {
+    let mut cmd = Command::new(container_cli);
     cmd.arg("login")
         .arg(&credentials.registry)
         .arg("--username")
@@ -312,31 +321,31 @@ async fn docker_login(credentials: &RegistryCredentials) -> Result<(), GatewayEr
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| GatewayError::Internal(format!("failed to spawn docker login: {e}")))?;
+        .map_err(|e| GatewayError::Internal(format!("failed to spawn container login: {e}")))?;
 
     if let Some(stdin) = child.stdin.as_mut() {
         stdin
             .write_all(credentials.password.expose().as_bytes())
             .await
             .map_err(|e| {
-                GatewayError::Internal(format!("failed to write docker login stdin: {e}"))
+                GatewayError::Internal(format!("failed to write container login stdin: {e}"))
             })?;
         stdin.write_all(b"\n").await.map_err(|e| {
-            GatewayError::Internal(format!("failed to finalize docker login stdin: {e}"))
+            GatewayError::Internal(format!("failed to finalize container login stdin: {e}"))
         })?;
     } else {
         return Err(GatewayError::Internal(
-            "docker login stdin unavailable".to_string(),
+            "container login stdin unavailable".to_string(),
         ));
     }
 
     let output = child
         .wait_with_output()
         .await
-        .map_err(|e| GatewayError::Internal(format!("failed to wait docker login: {e}")))?;
+        .map_err(|e| GatewayError::Internal(format!("failed to wait container login: {e}")))?;
     if !output.status.success() {
         return Err(GatewayError::Internal(format!(
-            "docker login failed: {}",
+            "container login failed: {}",
             String::from_utf8_lossy(&output.stderr)
         )));
     }
@@ -344,18 +353,18 @@ async fn docker_login(credentials: &RegistryCredentials) -> Result<(), GatewayEr
     Ok(())
 }
 
-async fn docker_logout(registry: &str) -> Result<(), GatewayError> {
-    let output = Command::new("docker")
+async fn container_logout(container_cli: &str, registry: &str) -> Result<(), GatewayError> {
+    let output = Command::new(container_cli)
         .arg("logout")
         .arg(registry)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()
         .await
-        .map_err(|e| GatewayError::Internal(format!("failed to spawn docker logout: {e}")))?;
+        .map_err(|e| GatewayError::Internal(format!("failed to spawn container logout: {e}")))?;
     if !output.status.success() {
         return Err(GatewayError::Internal(format!(
-            "docker logout failed: {}",
+            "container logout failed: {}",
             String::from_utf8_lossy(&output.stderr)
         )));
     }
@@ -403,6 +412,7 @@ mod tests {
                     description: tool.description.clone(),
                     docker_image: tool.docker_image.clone(),
                     allowed_subcommands: tool.allowed_subcommands.clone(),
+                    require_semantic_judge: tool.require_semantic_judge,
                 })
                 .collect())
         }
@@ -446,6 +456,7 @@ mod tests {
             keycloak_client_secret: None,
             semantic_judge_url: None,
             ui_enabled: true,
+            container_cli: "docker".to_string(),
             nfs_server_host: "127.0.0.1".to_string(),
             nfs_port: 2049,
             nfs_mount_port: 20048,

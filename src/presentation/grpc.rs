@@ -322,10 +322,16 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
             .await
             .map_err(internal)?
             .into_iter()
-            .map(|w| proto::ToolSummary {
-                name: w.name,
-                description: w.description,
-                kind: "workflow".to_string(),
+            .map(|w| {
+                let input_schema_json = serde_json::to_string(&w.input_schema).unwrap_or_default();
+                proto::ToolSummary {
+                    name: w.name,
+                    description: w.description,
+                    kind: "workflow".to_string(),
+                    input_schema_json,
+                    tags: vec!["workflow".to_string()],
+                    category: "external".to_string(),
+                }
             });
 
         let cli_tools = self
@@ -335,10 +341,36 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
             .await
             .map_err(internal)?
             .into_iter()
-            .map(|t| proto::ToolSummary {
-                name: t.name,
-                description: t.description,
-                kind: "cli".to_string(),
+            .map(|t| {
+                let input_schema_json = serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "subcommand": {
+                            "type": "string",
+                            "enum": t.allowed_subcommands,
+                            "description": "Allowed subcommands for this CLI tool"
+                        },
+                        "args": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Arguments to pass to the subcommand"
+                        }
+                    },
+                    "required": ["subcommand"]
+                })
+                .to_string();
+                let mut tags = vec!["cli".to_string()];
+                if t.require_semantic_judge {
+                    tags.push("judged".to_string());
+                }
+                proto::ToolSummary {
+                    name: t.name,
+                    description: t.description,
+                    kind: "cli".to_string(),
+                    input_schema_json,
+                    tags,
+                    category: "external".to_string(),
+                }
             });
 
         Ok(Response::new(proto::ListToolsResponse {
@@ -472,6 +504,7 @@ mod tests {
             keycloak_client_secret: None,
             semantic_judge_url: None,
             ui_enabled: true,
+            container_cli: "docker".to_string(),
             nfs_server_host: "127.0.0.1".to_string(),
             nfs_port: 2049,
             nfs_mount_port: 20048,

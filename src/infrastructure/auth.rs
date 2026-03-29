@@ -50,9 +50,13 @@ pub async fn require_operator(
 
 /// Extracted tenant identity from an authenticated request (ADR-056).
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Field will be consumed once ADR-056 tenant routing is wired
 pub struct TenantContext(pub Option<String>);
 
-pub fn verify_operator_token(config: &GatewayConfig, token: &str) -> Result<Option<String>, StatusCode> {
+pub fn verify_operator_token(
+    config: &GatewayConfig,
+    token: &str,
+) -> Result<Option<String>, StatusCode> {
     if config.operator_jwt_public_key_pem.trim().is_empty() {
         return Err(StatusCode::UNAUTHORIZED);
     }

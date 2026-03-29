@@ -400,7 +400,7 @@ pub async fn delete_cli_tool(
     path = "/v1/tools",
     tag = "Tools",
     responses(
-        (status = 200, description = "LLM-facing tool listing (name + description only)"),
+        (status = 200, description = "Unified tool listing with kind, schema, tags, and category"),
         (status = 401, description = "Unauthorized"),
     ),
     security(("bearer_jwt" = [])),
@@ -414,19 +414,45 @@ pub async fn list_tools(
     let workflow_tools = workflows.into_iter().map(|workflow| {
         json!({
             "name": workflow.name,
-            "description": workflow.description
+            "description": workflow.description,
+            "kind": "workflow",
+            "input_schema": workflow.input_schema,
+            "tags": ["workflow"],
+            "category": "external",
         })
     });
-    let cli_tools = cli_tools.into_iter().map(|tool| {
+    let cli_tool_entries = cli_tools.into_iter().map(|tool| {
+        let mut tags = vec!["cli"];
+        if tool.require_semantic_judge {
+            tags.push("judged");
+        }
+        let input_schema = json!({
+            "type": "object",
+            "properties": {
+                "subcommand": {
+                    "type": "string",
+                    "enum": tool.allowed_subcommands,
+                },
+                "args": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                },
+            },
+            "required": ["subcommand"],
+        });
         json!({
             "name": tool.name,
-            "description": tool.description
+            "description": tool.description,
+            "kind": "cli",
+            "input_schema": input_schema,
+            "tags": tags,
+            "category": "external",
         })
     });
 
     let all = workflow_tools
         .into_iter()
-        .chain(cli_tools)
+        .chain(cli_tool_entries)
         .collect::<Vec<_>>();
     Ok(Json(json!(all)))
 }

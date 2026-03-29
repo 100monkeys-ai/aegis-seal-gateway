@@ -200,9 +200,10 @@ impl ToolWorkflowRepository for SqliteStore {
     }
 
     async fn list_all(&self) -> Result<Vec<ToolWorkflowSummary>, GatewayError> {
-        let rows = sqlx::query("SELECT id,name,description FROM workflows ORDER BY name")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT id,name,description,input_schema FROM workflows ORDER BY name")
+                .fetch_all(&self.pool)
+                .await?;
         rows.into_iter()
             .map(|row| {
                 Ok(ToolWorkflowSummary {
@@ -212,6 +213,7 @@ impl ToolWorkflowRepository for SqliteStore {
                     ),
                     name: row.try_get("name")?,
                     description: row.try_get("description")?,
+                    input_schema: serde_json::from_str(&row.try_get::<String, _>("input_schema")?)?,
                 })
             })
             .collect()
@@ -289,7 +291,7 @@ impl EphemeralCliToolRepository for SqliteStore {
 
     async fn list_all(&self) -> Result<Vec<EphemeralCliToolSummary>, GatewayError> {
         let rows = sqlx::query(
-            "SELECT name,description,docker_image,allowed_subcommands FROM cli_tools ORDER BY name",
+            "SELECT name,description,docker_image,allowed_subcommands,require_semantic_judge FROM cli_tools ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -302,6 +304,7 @@ impl EphemeralCliToolRepository for SqliteStore {
                     allowed_subcommands: serde_json::from_str(
                         &row.try_get::<String, _>("allowed_subcommands")?,
                     )?,
+                    require_semantic_judge: row.try_get("require_semantic_judge")?,
                 })
             })
             .collect()

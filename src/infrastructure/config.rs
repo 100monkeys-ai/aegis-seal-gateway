@@ -1,4 +1,5 @@
 use crate::domain::SmcpGatewayConfigManifest;
+use crate::infrastructure::container_cli;
 
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
@@ -20,14 +21,20 @@ pub struct GatewayConfig {
     pub keycloak_client_secret: Option<String>,
     pub semantic_judge_url: Option<String>,
     pub ui_enabled: bool,
+    pub container_cli: String,
     pub nfs_server_host: String,
     pub nfs_port: u16,
     pub nfs_mount_port: u16,
 }
 
 impl GatewayConfig {
-    pub fn from_manifest(manifest: SmcpGatewayConfigManifest) -> Self {
-        Self {
+    pub fn from_manifest(manifest: SmcpGatewayConfigManifest) -> anyhow::Result<Self> {
+        let resolved_cli =
+            container_cli::resolve_container_cli(manifest.spec.cli.container_cli.as_deref())?;
+        let version = container_cli::validate_container_cli(&resolved_cli)?;
+        tracing::info!(binary = %resolved_cli, version = %version, "Container CLI resolved");
+
+        Ok(Self {
             bind_addr: manifest.spec.network.bind_addr,
             grpc_bind_addr: manifest.spec.network.grpc_bind_addr,
             database_url: manifest.spec.database.url,
@@ -70,14 +77,15 @@ impl GatewayConfig {
                 .semantic_judge_url
                 .filter(|value| !value.trim().is_empty()),
             ui_enabled: manifest.spec.ui.enabled,
+            container_cli: resolved_cli,
             nfs_server_host: manifest.spec.cli.nfs_server_host,
             nfs_port: manifest.spec.cli.nfs_port,
             nfs_mount_port: manifest.spec.cli.nfs_mount_port,
-        }
+        })
     }
 
     pub fn load_or_default() -> anyhow::Result<Self> {
         let manifest = SmcpGatewayConfigManifest::load_or_default()?;
-        Ok(Self::from_manifest(manifest))
+        Self::from_manifest(manifest)
     }
 }

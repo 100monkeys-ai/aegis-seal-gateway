@@ -46,6 +46,7 @@ pub struct EphemeralCliToolSummary {
     pub description: String,
     pub docker_image: String,
     pub allowed_subcommands: Vec<String>,
+    pub require_semantic_judge: bool,
 }
 
 #[cfg(test)]

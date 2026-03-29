@@ -16,6 +16,7 @@ struct SmcpClaims {
     tenant_id: String,
 }
 
+#[allow(dead_code)] // Consumed once SMCP tool routing is wired end-to-end
 pub struct SmcpVerifiedCall {
     pub execution_id: String,
     pub tool_name: String,

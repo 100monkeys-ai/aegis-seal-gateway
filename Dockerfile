@@ -1,4 +1,4 @@
-FROM rust:1.88-bookworm AS builder
+FROM rust:1.94-bookworm AS builder
 WORKDIR /workspace
 COPY aegis-smcp-gateway/ ./aegis-smcp-gateway/
 COPY aegis-proto/ ./aegis-proto/

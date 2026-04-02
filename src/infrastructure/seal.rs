@@ -11,6 +11,8 @@ use crate::infrastructure::errors::GatewayError;
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)] // Fields deserialized from JWT; consumed as orchestrator alignment progresses
 struct SealClaims {
+    /// Subject — caller identity (REQUIRED per spec §4.2.2).
+    sub: String,
     /// Execution ID — primary lookup key for sessions.
     execution_id: String,
     /// Tenant slug for multi-tenant routing.
@@ -27,6 +29,8 @@ struct SealClaims {
 
 #[allow(dead_code)] // Consumed once SEAL tool routing is wired end-to-end
 pub struct SealVerifiedCall {
+    /// Subject (caller identity) from the SEAL security token.
+    pub sub: String,
     pub execution_id: String,
     pub tool_name: String,
     pub arguments: Value,
@@ -95,6 +99,7 @@ pub fn verify_and_extract(
         .map_err(|e| GatewayError::Seal(format!("invalid tools/call params: {e}")))?;
 
     Ok(SealVerifiedCall {
+        sub: claims.sub,
         execution_id: claims.execution_id,
         tool_name: params.name,
         arguments: params.arguments,

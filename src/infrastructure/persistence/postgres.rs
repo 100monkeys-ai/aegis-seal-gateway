@@ -402,26 +402,32 @@ impl SealSessionRepository for PostgresStore {
 impl SecurityContextRepository for PostgresStore {
     async fn save(&self, context: SecurityContext) -> Result<(), GatewayError> {
         sqlx::query(
-            r#"INSERT INTO security_contexts(name, capabilities)
-               VALUES ($1, $2)
-               ON CONFLICT (name) DO UPDATE SET capabilities = EXCLUDED.capabilities"#,
+            r#"INSERT INTO security_contexts(name, capabilities, deny_list)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (name) DO UPDATE SET
+                 capabilities = EXCLUDED.capabilities,
+                 deny_list = EXCLUDED.deny_list"#,
         )
         .bind(context.name)
         .bind(serde_json::to_string(&context.capabilities)?)
+        .bind(serde_json::to_string(&context.deny_list)?)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Option<SecurityContext>, GatewayError> {
-        let row = sqlx::query("SELECT name, capabilities FROM security_contexts WHERE name = $1")
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT name, capabilities, deny_list FROM security_contexts WHERE name = $1",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(|r| {
             Ok(SecurityContext {
                 name: r.try_get("name")?,
                 capabilities: serde_json::from_str(&r.try_get::<String, _>("capabilities")?)?,
+                deny_list: serde_json::from_str(&r.try_get::<String, _>("deny_list")?)?,
                 tenant_id: None,
             })
         })
@@ -429,14 +435,17 @@ impl SecurityContextRepository for PostgresStore {
     }
 
     async fn list_all(&self) -> Result<Vec<SecurityContext>, GatewayError> {
-        let rows = sqlx::query("SELECT name, capabilities FROM security_contexts ORDER BY name")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT name, capabilities, deny_list FROM security_contexts ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter()
             .map(|row| {
                 Ok(SecurityContext {
                     name: row.try_get("name")?,
                     capabilities: serde_json::from_str(&row.try_get::<String, _>("capabilities")?)?,
+                    deny_list: serde_json::from_str(&row.try_get::<String, _>("deny_list")?)?,
                     tenant_id: None,
                 })
             })

@@ -88,15 +88,17 @@ impl InvocationService {
             .await?
             .ok_or(GatewayError::Forbidden)?;
 
+        // Evaluate the security context against the tool call (ADR-088 A1)
+        security_context.evaluate(&call.tool_name, &call.arguments)?;
+
+        let allow_human_delegated = security_context.allows_human_delegated_credentials();
+
         if self
             .cli_tools
             .find_by_name(&call.tool_name)
             .await?
             .is_some()
         {
-            if !security_context.capabilities.allow_cli_tools {
-                return Err(GatewayError::Forbidden);
-            }
             let command = call
                 .arguments
                 .get("subcommand")
@@ -126,24 +128,17 @@ impl InvocationService {
                     args,
                     fsal_mounts,
                     zaru_user_token: zaru_user_token.map(ToString::to_string),
-                    allow_human_delegated_credentials: security_context
-                        .capabilities
-                        .allow_human_delegated_credentials,
+                    allow_human_delegated_credentials: allow_human_delegated,
                 })
                 .await
         } else {
-            if !security_context.capabilities.allow_workflow_tools {
-                return Err(GatewayError::Forbidden);
-            }
             self.workflow_engine
                 .invoke_by_name(
                     &call.execution_id,
                     &call.tool_name,
                     call.arguments,
                     zaru_user_token,
-                    security_context
-                        .capabilities
-                        .allow_human_delegated_credentials,
+                    allow_human_delegated,
                 )
                 .await
         }
@@ -163,10 +158,12 @@ impl InvocationService {
             .ok_or_else(|| {
                 GatewayError::Internal("missing required security context 'internal'".to_string())
             })?;
+        // Evaluate the security context against the tool call (ADR-088 A1)
+        security_context.evaluate(tool_name, &args)?;
+
+        let allow_human_delegated = security_context.allows_human_delegated_credentials();
+
         if self.cli_tools.find_by_name(tool_name).await?.is_some() {
-            if !security_context.capabilities.allow_cli_tools {
-                return Err(GatewayError::Forbidden);
-            }
             let command = args
                 .get("subcommand")
                 .and_then(|v| v.as_str())
@@ -194,24 +191,17 @@ impl InvocationService {
                     args: cli_args,
                     fsal_mounts,
                     zaru_user_token: zaru_user_token.map(ToString::to_string),
-                    allow_human_delegated_credentials: security_context
-                        .capabilities
-                        .allow_human_delegated_credentials,
+                    allow_human_delegated_credentials: allow_human_delegated,
                 })
                 .await
         } else {
-            if !security_context.capabilities.allow_workflow_tools {
-                return Err(GatewayError::Forbidden);
-            }
             self.workflow_engine
                 .invoke_by_name(
                     execution_id,
                     tool_name,
                     args,
                     zaru_user_token,
-                    security_context
-                        .capabilities
-                        .allow_human_delegated_credentials,
+                    allow_human_delegated,
                 )
                 .await
         }

@@ -173,6 +173,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(SwaggerUi::new("/api-docs").url("/openapi.json", openapi_spec()))
         .merge(operator_routes)
         .route("/v1/invoke", post(invoke_seal))
+        .route("/v1/seal/invoke", post(invoke_seal))
         .route("/health", get(|| async { "ok" }))
         .with_state(state.clone());
     if config.ui_enabled {

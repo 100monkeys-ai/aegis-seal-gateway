@@ -152,10 +152,15 @@ document.getElementById("security-context-form").addEventListener("submit", asyn
   try {
     const body = {
       name: document.getElementById("ctx-name").value.trim(),
-      allow_workflow_tools: document.getElementById("ctx-workflow").checked,
-      allow_cli_tools: document.getElementById("ctx-cli").checked,
-      allow_explorer: document.getElementById("ctx-explorer").checked,
-      allow_human_delegated_credentials: document.getElementById("ctx-human").checked,
+      capabilities: [{
+        tool_pattern: "*",
+        path_allowlist: null,
+        command_allowlist: null,
+        subcommand_allowlist: null,
+        domain_allowlist: null,
+        max_response_size: null,
+      }],
+      deny_list: [],
     };
     await apiPost("/v1/security-contexts", body);
     setStatus("Security context saved");

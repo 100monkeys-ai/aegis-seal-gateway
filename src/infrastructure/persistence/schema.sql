@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS seal_sessions (
 
 CREATE TABLE IF NOT EXISTS security_contexts (
   name TEXT PRIMARY KEY,
-  capabilities TEXT NOT NULL
+  capabilities TEXT NOT NULL,
+  deny_list TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS gateway_events (

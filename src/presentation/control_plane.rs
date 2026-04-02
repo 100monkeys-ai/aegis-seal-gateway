@@ -5,10 +5,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    ApiSpec, ApiSpecId, CredentialResolutionPath, EphemeralCliTool, GatewayEvent,
-    SealSessionRecord, SecurityCapabilities, SecurityContext, ToolWorkflow, WorkflowId,
+    ApiSpec, ApiSpecId, Capability, CredentialResolutionPath, EphemeralCliTool, GatewayEvent,
+    SealSessionRecord, SecurityContext, ToolWorkflow, WorkflowId,
 };
-use crate::infrastructure::errors::GatewayError;
+use crate::infrastructure::errors::{classify_seal_error, GatewayError, SealErrorResponse};
 use crate::infrastructure::openapi::parse_operations;
 use crate::presentation::state::AppState;
 
@@ -523,10 +523,9 @@ pub async fn upsert_seal_session(
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpsertSecurityContextRequest {
     pub name: String,
-    pub allow_workflow_tools: bool,
-    pub allow_cli_tools: bool,
-    pub allow_explorer: bool,
-    pub allow_human_delegated_credentials: bool,
+    pub capabilities: Vec<Capability>,
+    #[serde(default)]
+    pub deny_list: Vec<String>,
 }
 
 #[utoipa::path(
@@ -554,12 +553,8 @@ pub async fn upsert_security_context(
         .security_contexts
         .save(SecurityContext {
             name: req.name,
-            capabilities: SecurityCapabilities {
-                allow_workflow_tools: req.allow_workflow_tools,
-                allow_cli_tools: req.allow_cli_tools,
-                allow_explorer: req.allow_explorer,
-                allow_human_delegated_credentials: req.allow_human_delegated_credentials,
-            },
+            capabilities: req.capabilities,
+            deny_list: req.deny_list,
             tenant_id: None, // TODO(ADR-056): Extract from request TenantContext extension
         })
         .await
@@ -666,6 +661,18 @@ pub fn error_response(err: GatewayError) -> (StatusCode, Json<Value>) {
             Json(json!({"error": "unauthorized"})),
         ),
         GatewayError::Forbidden => (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))),
+        GatewayError::Seal(ref msg) => {
+            let code = classify_seal_error(msg);
+            let status = match code {
+                1002..=1006 => StatusCode::UNAUTHORIZED,
+                _ => StatusCode::BAD_REQUEST,
+            };
+            let body = SealErrorResponse::new(code, msg.clone());
+            (
+                status,
+                Json(serde_json::to_value(body).unwrap_or_else(|_| json!({"error": msg}))),
+            )
+        }
         other => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": other.to_string()})),

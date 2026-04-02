@@ -1,10 +1,11 @@
 use base64::Engine;
+use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::domain::{MpcToolCall, MpcToolParams, SealEnvelope};
+use crate::domain::{SealEnvelope, SealToolCall, SealToolParams};
 use crate::infrastructure::errors::GatewayError;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,7 +50,8 @@ pub fn verify_and_extract(
         .map_err(|_| GatewayError::Seal("signature must be 64 bytes".to_string()))?;
     let sig = Signature::from_bytes(&sig_arr);
 
-    key.verify(&envelope.inner_mcp, &sig)
+    let message = signed_message(envelope)?;
+    key.verify(&message, &sig)
         .map_err(|e| GatewayError::Seal(format!("signature verify failed: {e}")))?;
 
     if seal_jwt_public_key_pem.trim().is_empty() {
@@ -71,15 +73,15 @@ pub fn verify_and_extract(
     .map_err(|e| GatewayError::Seal(format!("security token invalid: {e}")))?
     .claims;
 
-    let tool_call: MpcToolCall = serde_json::from_slice(&envelope.inner_mcp)
-        .map_err(|e| GatewayError::Seal(format!("invalid inner MCP payload: {e}")))?;
+    let tool_call: SealToolCall = serde_json::from_slice(&envelope.payload)
+        .map_err(|e| GatewayError::Seal(format!("invalid payload: {e}")))?;
     if tool_call.method != "tools/call" {
         return Err(GatewayError::Seal(
-            "inner MCP method must be tools/call".to_string(),
+            "payload method must be tools/call".to_string(),
         ));
     }
 
-    let params: MpcToolParams = serde_json::from_value(tool_call.params)
+    let params: SealToolParams = serde_json::from_value(tool_call.params)
         .map_err(|e| GatewayError::Seal(format!("invalid tools/call params: {e}")))?;
 
     Ok(SealVerifiedCall {
@@ -88,4 +90,55 @@ pub fn verify_and_extract(
         arguments: params.arguments,
         tenant_id: claims.tenant_id,
     })
+}
+
+/// Determine the message bytes that were signed, supporting both canonical
+/// (seal/v1 with timestamp) and legacy (raw payload) modes.
+fn signed_message(envelope: &SealEnvelope) -> Result<Vec<u8>, GatewayError> {
+    match (&envelope.protocol, &envelope.timestamp) {
+        (Some(protocol), Some(timestamp)) => {
+            if protocol != "seal/v1" {
+                return Err(GatewayError::Seal(format!(
+                    "unsupported SEAL protocol '{protocol}'"
+                )));
+            }
+
+            let timestamp = parse_iso8601_timestamp(timestamp)?;
+            let age_seconds = (Utc::now() - timestamp).num_seconds().abs();
+            if age_seconds > 30 {
+                return Err(GatewayError::Seal(format!(
+                    "envelope timestamp is outside the 30 second freshness window ({age_seconds}s)"
+                )));
+            }
+
+            canonical_message(&envelope.security_token, &envelope.payload, timestamp)
+        }
+        (None, None) => Ok(envelope.payload.clone()),
+        _ => Err(GatewayError::Seal(
+            "SEAL envelopes must provide both protocol and timestamp together".to_string(),
+        )),
+    }
+}
+
+fn parse_iso8601_timestamp(input: &str) -> Result<DateTime<Utc>, GatewayError> {
+    DateTime::parse_from_rfc3339(input)
+        .map(|ts| ts.with_timezone(&Utc))
+        .map_err(|e| GatewayError::Seal(format!("invalid SEAL timestamp '{input}': {e}")))
+}
+
+fn canonical_message(
+    security_token: &str,
+    payload: &[u8],
+    timestamp: DateTime<Utc>,
+) -> Result<Vec<u8>, GatewayError> {
+    let payload_json: Value = serde_json::from_slice(payload)
+        .map_err(|e| GatewayError::Seal(format!("invalid payload JSON: {e}")))?;
+    let canonical = serde_json::json!({
+        "payload": payload_json,
+        "security_token": security_token,
+        "timestamp": timestamp.timestamp(),
+    });
+
+    serde_json::to_vec(&canonical)
+        .map_err(|e| GatewayError::Seal(format!("failed to serialize canonical SEAL message: {e}")))
 }

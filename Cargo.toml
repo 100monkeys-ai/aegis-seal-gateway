@@ -40,6 +40,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2.5"
 uuid = { version = "1.15", features = ["v4", "serde"] }
 aegis_orchestrator_proto = { version = "0.14.0-pre-alpha", path = "../aegis-proto", package = "aegis-orchestrator-proto" }
 tonic = { version = "0.14", features = ["transport"] }

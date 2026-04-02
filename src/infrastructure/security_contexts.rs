@@ -1,36 +1,65 @@
-use crate::domain::{SecurityCapabilities, SecurityContext};
+use crate::domain::{Capability, SecurityContext};
 
 pub fn default_security_contexts() -> Vec<SecurityContext> {
     vec![
         SecurityContext {
             name: "default".to_string(),
-            capabilities: SecurityCapabilities {
-                allow_workflow_tools: true,
-                allow_cli_tools: true,
-                allow_explorer: false,
-                allow_human_delegated_credentials: false,
-            },
-            tenant_id: None, // System-wide context
+            capabilities: vec![Capability {
+                tool_pattern: "*".to_string(),
+                path_allowlist: None,
+                command_allowlist: None,
+                subcommand_allowlist: None,
+                domain_allowlist: None,
+                max_response_size: None,
+            }],
+            deny_list: vec![],
+            tenant_id: None,
         },
         SecurityContext {
             name: "internal".to_string(),
-            capabilities: SecurityCapabilities {
-                allow_workflow_tools: true,
-                allow_cli_tools: true,
-                allow_explorer: true,
-                allow_human_delegated_credentials: true,
-            },
-            tenant_id: None, // System-wide context
+            capabilities: vec![
+                Capability {
+                    tool_pattern: "*".to_string(),
+                    path_allowlist: None,
+                    command_allowlist: None,
+                    subcommand_allowlist: None,
+                    domain_allowlist: None,
+                    max_response_size: None,
+                },
+                Capability {
+                    tool_pattern: "credentials.*".to_string(),
+                    path_allowlist: None,
+                    command_allowlist: None,
+                    subcommand_allowlist: None,
+                    domain_allowlist: None,
+                    max_response_size: None,
+                },
+            ],
+            deny_list: vec![],
+            tenant_id: None,
         },
         SecurityContext {
             name: "zaru-free".to_string(),
-            capabilities: SecurityCapabilities {
-                allow_workflow_tools: true,
-                allow_cli_tools: true,
-                allow_explorer: false,
-                allow_human_delegated_credentials: true,
-            },
-            tenant_id: None, // System-wide context
+            capabilities: vec![
+                Capability {
+                    tool_pattern: "*".to_string(),
+                    path_allowlist: None,
+                    command_allowlist: None,
+                    subcommand_allowlist: None,
+                    domain_allowlist: None,
+                    max_response_size: None,
+                },
+                Capability {
+                    tool_pattern: "credentials.*".to_string(),
+                    path_allowlist: None,
+                    command_allowlist: None,
+                    subcommand_allowlist: None,
+                    domain_allowlist: None,
+                    max_response_size: None,
+                },
+            ],
+            deny_list: vec![],
+            tenant_id: None,
         },
     ]
 }

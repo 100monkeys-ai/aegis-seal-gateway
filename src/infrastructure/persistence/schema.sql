@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS cli_tools (
   registry_credential_path TEXT
 );
 
-CREATE TABLE IF NOT EXISTS smcp_sessions (
+CREATE TABLE IF NOT EXISTS seal_sessions (
   execution_id TEXT PRIMARY KEY,
   agent_id TEXT NOT NULL,
   security_context TEXT NOT NULL,

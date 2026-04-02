@@ -33,12 +33,12 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: aegis-smcp-gateway
+        working-directory: aegis-seal-gateway
     steps:
       - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          path: aegis-smcp-gateway
+          path: aegis-seal-gateway
 
       - name: Checkout proto repo
         uses: actions/checkout@v6
@@ -55,13 +55,13 @@ jobs:
       - name: Prepare proto files for docs build
         run: |
           mkdir -p proto-vendor/aegis
-          cp ../aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+          cp ../aegis-proto/proto/seal_gateway.proto proto-vendor/aegis/seal_gateway.proto
 
       - name: Build documentation
         run: |
-          cargo doc --locked --no-deps --document-private-items -p aegis-smcp-gateway
+          cargo doc --locked --no-deps --document-private-items -p aegis-seal-gateway
 
       - name: Verify documentation
         run: |
           echo "✅ Documentation built successfully"
-          echo "📚 docs.rs will publish at: https://docs.rs/aegis-smcp-gateway"
+          echo "📚 docs.rs will publish at: https://docs.rs/aegis-seal-gateway"

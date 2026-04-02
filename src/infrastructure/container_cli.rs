@@ -5,7 +5,7 @@ use std::process::Command;
 ///
 /// Precedence:
 /// 1. Explicit configuration value (if provided and not empty)
-/// 2. `SMCP_GATEWAY_CONTAINER_CLI` environment variable
+/// 2. `SEAL_GATEWAY_CONTAINER_CLI` environment variable
 /// 3. Auto-detect:
 ///    - If `CONTAINER_HOST` is set → prefer `podman` (binary or socket-only)
 ///    - If `DOCKER_HOST` is set → prefer `docker` (binary or socket-only)
@@ -22,7 +22,7 @@ pub fn resolve_container_cli(configured: Option<&str>) -> anyhow::Result<String>
     }
 
     // 2. Environment variable override
-    if let Ok(value) = std::env::var("SMCP_GATEWAY_CONTAINER_CLI") {
+    if let Ok(value) = std::env::var("SEAL_GATEWAY_CONTAINER_CLI") {
         let trimmed = value.trim().to_string();
         if !trimmed.is_empty() {
             return Ok(trimmed);
@@ -52,7 +52,7 @@ pub fn resolve_container_cli(configured: Option<&str>) -> anyhow::Result<String>
 
     anyhow::bail!(
         "No container CLI binary found. Install podman or docker, or set \
-         cli.container_cli in smcp-gateway-config.yaml"
+         cli.container_cli in seal-gateway-config.yaml"
     )
 }
 

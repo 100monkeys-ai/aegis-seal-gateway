@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aegis-smcp-gateway"
+name = "aegis-seal-gateway"
 version = "0.14.0-pre-alpha"
 dependencies = [
  "aegis-orchestrator-proto",

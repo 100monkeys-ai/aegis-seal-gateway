@@ -16,7 +16,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: aegis-smcp-gateway
+  BINARY_NAME: aegis-seal-gateway
   FORCE_PRERELEASE: 'true'  # TODO: set to 'false' or remove after alpha
 
 permissions:
@@ -28,13 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: aegis-smcp-gateway
+        working-directory: aegis-seal-gateway
 
     steps:
       - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          path: aegis-smcp-gateway
+          path: aegis-seal-gateway
 
       - name: Checkout proto repo
         uses: actions/checkout@v6
@@ -57,15 +57,15 @@ jobs:
       - name: Create tarball
         run: |
           cd target/release
-          tar -czf aegis-smcp-gateway-linux-x86_64.tar.gz aegis-smcp-gateway
+          tar -czf aegis-seal-gateway-linux-x86_64.tar.gz aegis-seal-gateway
           cd ../..
-          mv target/release/aegis-smcp-gateway-linux-x86_64.tar.gz .
+          mv target/release/aegis-seal-gateway-linux-x86_64.tar.gz .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: aegis-smcp-gateway-linux-x86_64
-          path: aegis-smcp-gateway/aegis-smcp-gateway-linux-x86_64.tar.gz
+          name: aegis-seal-gateway-linux-x86_64
+          path: aegis-seal-gateway/aegis-seal-gateway-linux-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 1
 
@@ -74,13 +74,13 @@ jobs:
     runs-on: macos-latest
     defaults:
       run:
-        working-directory: aegis-smcp-gateway
+        working-directory: aegis-seal-gateway
 
     steps:
       - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          path: aegis-smcp-gateway
+          path: aegis-seal-gateway
 
       - name: Checkout proto repo
         uses: actions/checkout@v6
@@ -103,15 +103,15 @@ jobs:
       - name: Create tarball
         run: |
           cd target/aarch64-apple-darwin/release
-          tar -czf aegis-smcp-gateway-macos-aarch64.tar.gz aegis-smcp-gateway
+          tar -czf aegis-seal-gateway-macos-aarch64.tar.gz aegis-seal-gateway
           cd ../../..
-          mv target/aarch64-apple-darwin/release/aegis-smcp-gateway-macos-aarch64.tar.gz .
+          mv target/aarch64-apple-darwin/release/aegis-seal-gateway-macos-aarch64.tar.gz .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: aegis-smcp-gateway-macos-aarch64
-          path: aegis-smcp-gateway/aegis-smcp-gateway-macos-aarch64.tar.gz
+          name: aegis-seal-gateway-macos-aarch64
+          path: aegis-seal-gateway/aegis-seal-gateway-macos-aarch64.tar.gz
           if-no-files-found: error
           retention-days: 1
 
@@ -163,14 +163,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
-          name: AEGIS SMCP Gateway ${{ steps.version.outputs.VERSION }}
+          name: AEGIS SEAL Gateway ${{ steps.version.outputs.VERSION }}
           draft: false
           prerelease: ${{ env.FORCE_PRERELEASE == 'true' || steps.version.outputs.IS_PRERELEASE == 'true' }}
           generate_release_notes: true
           files: |
-            artifacts/aegis-smcp-gateway-linux-x86_64/aegis-smcp-gateway-linux-x86_64.tar.gz
-            artifacts/aegis-smcp-gateway-linux-x86_64/aegis-smcp-gateway-linux-x86_64.tar.gz.sha256
-            artifacts/aegis-smcp-gateway-macos-aarch64/aegis-smcp-gateway-macos-aarch64.tar.gz
-            artifacts/aegis-smcp-gateway-macos-aarch64/aegis-smcp-gateway-macos-aarch64.tar.gz.sha256
+            artifacts/aegis-seal-gateway-linux-x86_64/aegis-seal-gateway-linux-x86_64.tar.gz
+            artifacts/aegis-seal-gateway-linux-x86_64/aegis-seal-gateway-linux-x86_64.tar.gz.sha256
+            artifacts/aegis-seal-gateway-macos-aarch64/aegis-seal-gateway-macos-aarch64.tar.gz
+            artifacts/aegis-seal-gateway-macos-aarch64/aegis-seal-gateway-macos-aarch64.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

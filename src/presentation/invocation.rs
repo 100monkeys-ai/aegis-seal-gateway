@@ -4,7 +4,7 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::application::ApiExplorerRequest;
-use crate::domain::SmcpEnvelope;
+use crate::domain::SealEnvelope;
 use crate::presentation::control_plane::error_response;
 use crate::presentation::state::AppState;
 
@@ -12,20 +12,20 @@ use crate::presentation::state::AppState;
     post,
     path = "/v1/invoke",
     tag = "Invocation",
-    request_body = SmcpEnvelope,
+    request_body = SealEnvelope,
     responses(
         (status = 200, description = "Invocation result"),
         (status = 400, description = "Validation / policy error"),
-        (status = 401, description = "SMCP signature verification failed"),
+        (status = 401, description = "SEAL signature verification failed"),
     ),
 )]
-pub async fn invoke_smcp(
+pub async fn invoke_seal(
     State(state): State<AppState>,
-    Json(envelope): Json<SmcpEnvelope>,
+    Json(envelope): Json<SealEnvelope>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let result = state
         .invocation_service
-        .invoke_smcp(envelope, None)
+        .invoke_seal(envelope, None)
         .await
         .map_err(error_response)?;
     Ok(Json(json!({"result": result})))

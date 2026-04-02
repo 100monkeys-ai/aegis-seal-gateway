@@ -1,4 +1,4 @@
-use crate::domain::SmcpGatewayConfigManifest;
+use crate::domain::SealGatewayConfigManifest;
 use crate::infrastructure::container_cli;
 
 #[derive(Debug, Clone)]
@@ -10,9 +10,9 @@ pub struct GatewayConfig {
     pub operator_jwt_issuer: String,
     pub operator_jwt_audience: String,
     pub auth_disabled: bool,
-    pub smcp_jwt_public_key_pem: String,
-    pub smcp_jwt_issuer: String,
-    pub smcp_jwt_audience: String,
+    pub seal_jwt_public_key_pem: String,
+    pub seal_jwt_issuer: String,
+    pub seal_jwt_audience: String,
     pub openbao_addr: Option<String>,
     pub openbao_token: Option<String>,
     pub openbao_kv_mount: String,
@@ -28,7 +28,7 @@ pub struct GatewayConfig {
 }
 
 impl GatewayConfig {
-    pub fn from_manifest(manifest: SmcpGatewayConfigManifest) -> anyhow::Result<Self> {
+    pub fn from_manifest(manifest: SealGatewayConfigManifest) -> anyhow::Result<Self> {
         let resolved_cli =
             container_cli::resolve_container_cli(manifest.spec.cli.container_cli.as_deref())?;
         let version = container_cli::validate_container_cli(&resolved_cli)?;
@@ -42,9 +42,9 @@ impl GatewayConfig {
             operator_jwt_issuer: manifest.spec.auth.operator_jwt_issuer,
             operator_jwt_audience: manifest.spec.auth.operator_jwt_audience,
             auth_disabled: manifest.spec.auth.disabled,
-            smcp_jwt_public_key_pem: manifest.spec.auth.smcp_jwt_public_key_pem,
-            smcp_jwt_issuer: manifest.spec.auth.smcp_jwt_issuer,
-            smcp_jwt_audience: manifest.spec.auth.smcp_jwt_audience,
+            seal_jwt_public_key_pem: manifest.spec.auth.seal_jwt_public_key_pem,
+            seal_jwt_issuer: manifest.spec.auth.seal_jwt_issuer,
+            seal_jwt_audience: manifest.spec.auth.seal_jwt_audience,
             openbao_addr: manifest
                 .spec
                 .credentials
@@ -85,7 +85,7 @@ impl GatewayConfig {
     }
 
     pub fn load_or_default() -> anyhow::Result<Self> {
-        let manifest = SmcpGatewayConfigManifest::load_or_default()?;
+        let manifest = SealGatewayConfigManifest::load_or_default()?;
         Self::from_manifest(manifest)
     }
 }

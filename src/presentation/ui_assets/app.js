@@ -1,11 +1,11 @@
 const tokenInput = document.getElementById("bearer-token");
 const statusText = document.getElementById("status-text");
 
-const savedToken = localStorage.getItem("smcp_gateway_token");
+const savedToken = localStorage.getItem("seal_gateway_token");
 if (savedToken) tokenInput.value = savedToken;
 
 document.getElementById("save-token").addEventListener("click", () => {
-  localStorage.setItem("smcp_gateway_token", tokenInput.value.trim());
+  localStorage.setItem("seal_gateway_token", tokenInput.value.trim());
   setStatus("Token saved locally");
 });
 

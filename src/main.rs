@@ -17,8 +17,8 @@ use application::{
     CliEngine, CredentialResolver, ExplorerService, InvocationService, SemanticGate, WorkflowEngine,
 };
 use domain::{
-    ApiSpecRepository, EphemeralCliToolRepository, SecurityContextRepository, SmcpSessionRecord,
-    SmcpSessionRepository, ToolWorkflowRepository,
+    ApiSpecRepository, EphemeralCliToolRepository, SealSessionRecord, SealSessionRepository,
+    SecurityContextRepository, ToolWorkflowRepository,
 };
 use infrastructure::auth::require_operator;
 use infrastructure::config::GatewayConfig;
@@ -41,7 +41,7 @@ type RepositoryBundle = (
     Arc<dyn ApiSpecRepository>,
     Arc<dyn ToolWorkflowRepository>,
     Arc<dyn EphemeralCliToolRepository>,
-    Arc<dyn SmcpSessionRepository>,
+    Arc<dyn SealSessionRepository>,
     Arc<dyn SecurityContextRepository>,
     Arc<dyn EventStore>,
 );
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = GatewayConfig::load_or_default()?;
-    let (specs, workflows, cli_tools, smcp_sessions, security_contexts, event_store): RepositoryBundle =
+    let (specs, workflows, cli_tools, seal_sessions, security_contexts, event_store): RepositoryBundle =
         if config.database_url.starts_with("postgres://")
             || config.database_url.starts_with("postgresql://")
         {
@@ -84,15 +84,15 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    if std::env::var("SMCP_GATEWAY_BOOTSTRAP_SESSION").is_ok() {
-        smcp_sessions
-            .save(SmcpSessionRecord {
+    if std::env::var("SEAL_GATEWAY_BOOTSTRAP_SESSION").is_ok() {
+        seal_sessions
+            .save(SealSessionRecord {
                 execution_id: "dev-execution".to_string(),
                 agent_id: "dev-agent".to_string(),
                 security_context: "default".to_string(),
                 public_key_b64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string(),
                 security_token: "dev".to_string(),
-                session_status: domain::SmcpSessionStatus::Active,
+                session_status: domain::SealSessionStatus::Active,
                 expires_at: Utc::now() + Duration::hours(1),
                 allowed_tool_patterns: vec!["*".to_string()],
             })
@@ -127,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
         workflow_engine,
         cli_engine,
         cli_tools.clone(),
-        smcp_sessions.clone(),
+        seal_sessions.clone(),
         security_contexts.clone(),
         config.clone(),
     );
@@ -137,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
         specs,
         workflows,
         cli_tools,
-        smcp_sessions: smcp_sessions.clone(),
+        seal_sessions: seal_sessions.clone(),
         security_contexts: security_contexts.clone(),
         audit_store: event_store,
         invocation_service: invocation,
@@ -156,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/v1/cli-tools", post(register_cli_tool).get(list_cli_tools))
         .route("/v1/cli-tools/{name}", delete(delete_cli_tool))
-        .route("/v1/smcp/sessions", post(upsert_smcp_session))
+        .route("/v1/seal/sessions", post(upsert_seal_session))
         .route(
             "/v1/security-contexts",
             post(upsert_security_context).get(list_security_contexts),
@@ -172,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
     let mut app = Router::new()
         .merge(SwaggerUi::new("/api-docs").url("/openapi.json", openapi_spec()))
         .merge(operator_routes)
-        .route("/v1/invoke", post(invoke_smcp))
+        .route("/v1/invoke", post(invoke_seal))
         .route("/health", get(|| async { "ok" }))
         .with_state(state.clone());
     if config.ui_enabled {
@@ -183,12 +183,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
-    tracing::info!("aegis-smcp-gateway listening on {}", config.bind_addr);
+    tracing::info!("aegis-seal-gateway listening on {}", config.bind_addr);
 
     let grpc_addr: std::net::SocketAddr = config.grpc_bind_addr.parse()?;
     let grpc_service = GatewayGrpcService::new(state);
     tracing::info!(
-        "aegis-smcp-gateway gRPC listening on {}",
+        "aegis-seal-gateway gRPC listening on {}",
         config.grpc_bind_addr
     );
 

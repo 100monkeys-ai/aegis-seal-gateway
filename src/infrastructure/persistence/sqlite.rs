@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use crate::domain::{
     ApiSpec, ApiSpecId, ApiSpecRepository, ApiSpecSummary, EphemeralCliTool,
-    EphemeralCliToolRepository, EphemeralCliToolSummary, SecurityContext,
-    SecurityContextRepository, SmcpSessionRecord, SmcpSessionRepository, ToolWorkflow,
-    ToolWorkflowRepository, ToolWorkflowSummary, WorkflowId,
+    EphemeralCliToolRepository, EphemeralCliToolSummary, SealSessionRecord, SealSessionRepository,
+    SecurityContext, SecurityContextRepository, ToolWorkflow, ToolWorkflowRepository,
+    ToolWorkflowSummary, WorkflowId,
 };
 use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::persistence::EventStore;
@@ -337,10 +337,10 @@ fn cli_tool_from_row(row: sqlx::sqlite::SqliteRow) -> Result<EphemeralCliTool, G
 }
 
 #[async_trait]
-impl SmcpSessionRepository for SqliteStore {
-    async fn save(&self, session: SmcpSessionRecord) -> Result<(), GatewayError> {
+impl SealSessionRepository for SqliteStore {
+    async fn save(&self, session: SealSessionRecord) -> Result<(), GatewayError> {
         sqlx::query(
-            "INSERT OR REPLACE INTO smcp_sessions(execution_id, agent_id, security_context, public_key_b64, security_token, session_status, expires_at, allowed_tool_patterns) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO seal_sessions(execution_id, agent_id, security_context, public_key_b64, security_token, session_status, expires_at, allowed_tool_patterns) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.execution_id)
         .bind(session.agent_id)
@@ -358,16 +358,16 @@ impl SmcpSessionRepository for SqliteStore {
     async fn find_by_execution_id(
         &self,
         execution_id: &str,
-    ) -> Result<Option<SmcpSessionRecord>, GatewayError> {
+    ) -> Result<Option<SealSessionRecord>, GatewayError> {
         let row = sqlx::query(
-            "SELECT execution_id,agent_id,security_context,public_key_b64,security_token,session_status,expires_at,allowed_tool_patterns FROM smcp_sessions WHERE execution_id=?",
+            "SELECT execution_id,agent_id,security_context,public_key_b64,security_token,session_status,expires_at,allowed_tool_patterns FROM seal_sessions WHERE execution_id=?",
         )
         .bind(execution_id)
         .fetch_optional(&self.pool)
         .await?;
 
         row.map(|r| {
-            Ok(SmcpSessionRecord {
+            Ok(SealSessionRecord {
                 execution_id: r.try_get("execution_id")?,
                 agent_id: r.try_get("agent_id")?,
                 security_context: r.try_get("security_context")?,

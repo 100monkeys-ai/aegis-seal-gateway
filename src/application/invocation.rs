@@ -4,21 +4,21 @@ use base64::Engine;
 use serde_json::Value;
 
 use crate::application::{CliEngine, CliFsalMount, CliInvocation, WorkflowEngine};
-use crate::domain::SmcpEnvelope;
+use crate::domain::SealEnvelope;
 use crate::domain::{
-    EphemeralCliToolRepository, SecurityContextRepository, SmcpSessionRepository,
-    SmcpSessionStatus, ToolWorkflow, WorkflowId,
+    EphemeralCliToolRepository, SealSessionRepository, SealSessionStatus,
+    SecurityContextRepository, ToolWorkflow, WorkflowId,
 };
 use crate::infrastructure::config::GatewayConfig;
 use crate::infrastructure::errors::GatewayError;
-use crate::infrastructure::smcp::verify_and_extract;
+use crate::infrastructure::seal::verify_and_extract;
 
 #[derive(Clone)]
 pub struct InvocationService {
     workflow_engine: WorkflowEngine,
     cli_engine: CliEngine,
     cli_tools: Arc<dyn EphemeralCliToolRepository>,
-    smcp_sessions: Arc<dyn SmcpSessionRepository>,
+    seal_sessions: Arc<dyn SealSessionRepository>,
     security_contexts: Arc<dyn SecurityContextRepository>,
     config: GatewayConfig,
 }
@@ -28,7 +28,7 @@ impl InvocationService {
         workflow_engine: WorkflowEngine,
         cli_engine: CliEngine,
         cli_tools: Arc<dyn EphemeralCliToolRepository>,
-        smcp_sessions: Arc<dyn SmcpSessionRepository>,
+        seal_sessions: Arc<dyn SealSessionRepository>,
         security_contexts: Arc<dyn SecurityContextRepository>,
         config: GatewayConfig,
     ) -> Self {
@@ -36,25 +36,25 @@ impl InvocationService {
             workflow_engine,
             cli_engine,
             cli_tools,
-            smcp_sessions,
+            seal_sessions,
             security_contexts,
             config,
         }
     }
 
-    pub async fn invoke_smcp(
+    pub async fn invoke_seal(
         &self,
-        envelope: SmcpEnvelope,
+        envelope: SealEnvelope,
         zaru_user_token: Option<&str>,
     ) -> Result<Value, GatewayError> {
         let unsecured_claims: serde_json::Value = decode_unverified(&envelope.security_token)?;
         let execution_id = unsecured_claims
             .get("execution_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GatewayError::Smcp("security token missing execution_id".to_string()))?;
+            .ok_or_else(|| GatewayError::Seal("security token missing execution_id".to_string()))?;
 
         let session = self
-            .smcp_sessions
+            .seal_sessions
             .find_by_execution_id(execution_id)
             .await?
             .ok_or(GatewayError::Unauthorized)?;
@@ -62,14 +62,14 @@ impl InvocationService {
         let call = verify_and_extract(
             &envelope,
             &session.public_key_b64,
-            &self.config.smcp_jwt_public_key_pem,
-            &self.config.smcp_jwt_issuer,
-            &self.config.smcp_jwt_audience,
+            &self.config.seal_jwt_public_key_pem,
+            &self.config.seal_jwt_issuer,
+            &self.config.seal_jwt_audience,
         )?;
         if call.execution_id != session.execution_id {
             return Err(GatewayError::Unauthorized);
         }
-        if session.session_status != SmcpSessionStatus::Active {
+        if session.session_status != SealSessionStatus::Active {
             return Err(GatewayError::Unauthorized);
         }
         if session.expires_at <= chrono::Utc::now() {
@@ -238,11 +238,11 @@ fn tool_pattern_matches(pattern: &str, tool_name: &str) -> bool {
 fn decode_unverified(token: &str) -> Result<serde_json::Value, GatewayError> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
-        return Err(GatewayError::Smcp("invalid JWT".to_string()));
+        return Err(GatewayError::Seal("invalid JWT".to_string()));
     }
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(parts[1])
-        .map_err(|e| GatewayError::Smcp(format!("invalid JWT payload encoding: {e}")))?;
+        .map_err(|e| GatewayError::Seal(format!("invalid JWT payload encoding: {e}")))?;
     let value: serde_json::Value = serde_json::from_slice(&payload)?;
     Ok(value)
 }

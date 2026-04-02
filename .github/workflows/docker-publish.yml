@@ -12,7 +12,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: 100monkeys-ai/aegis-smcp-gateway
+  IMAGE_NAME: 100monkeys-ai/aegis-seal-gateway
 
 jobs:
   build-and-push:
@@ -27,7 +27,7 @@ jobs:
       - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          path: aegis-smcp-gateway
+          path: aegis-seal-gateway
 
       - name: Checkout proto repo
         uses: actions/checkout@v6
@@ -61,7 +61,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: aegis-smcp-gateway/Dockerfile
+          file: aegis-seal-gateway/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

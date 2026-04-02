@@ -8,7 +8,7 @@ use crate::infrastructure::auth::verify_operator_token;
 use crate::presentation::state::AppState;
 
 pub mod proto {
-    tonic::include_proto!("aegis.smcp_gateway.v1");
+    tonic::include_proto!("aegis.seal_gateway.v1");
 }
 
 #[derive(Clone)]
@@ -493,9 +493,9 @@ mod tests {
             operator_jwt_issuer: "issuer".to_string(),
             operator_jwt_audience: "audience".to_string(),
             auth_disabled,
-            smcp_jwt_public_key_pem: String::new(),
-            smcp_jwt_issuer: "smcp-issuer".to_string(),
-            smcp_jwt_audience: "smcp-audience".to_string(),
+            seal_jwt_public_key_pem: String::new(),
+            seal_jwt_issuer: "seal-issuer".to_string(),
+            seal_jwt_audience: "seal-audience".to_string(),
             openbao_addr: None,
             openbao_token: None,
             openbao_kv_mount: "secret".to_string(),

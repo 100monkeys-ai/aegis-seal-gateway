@@ -14,8 +14,8 @@ pub enum GatewayError {
     Database(String),
     #[error("http error: {0}")]
     Http(String),
-    #[error("smcp error: {0}")]
-    Smcp(String),
+    #[error("seal error: {0}")]
+    Seal(String),
     #[error("serialization error: {0}")]
     Serialization(String),
     #[error("internal error: {0}")]

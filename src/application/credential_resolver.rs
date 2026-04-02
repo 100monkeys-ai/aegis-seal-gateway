@@ -85,10 +85,10 @@ impl CredentialResolver {
         role: &str,
     ) -> Result<Vec<(String, SensitiveString)>, GatewayError> {
         let openbao_addr = self.config.openbao_addr.as_deref().ok_or_else(|| {
-            GatewayError::Internal("SMCP_GATEWAY_OPENBAO_ADDR is required".to_string())
+            GatewayError::Internal("SEAL_GATEWAY_OPENBAO_ADDR is required".to_string())
         })?;
         let openbao_token = self.config.openbao_token.as_deref().ok_or_else(|| {
-            GatewayError::Internal("SMCP_GATEWAY_OPENBAO_TOKEN is required".to_string())
+            GatewayError::Internal("SEAL_GATEWAY_OPENBAO_TOKEN is required".to_string())
         })?;
 
         if openbao_engine_path.trim().is_empty() || role.trim().is_empty() {
@@ -264,10 +264,10 @@ impl CredentialResolver {
         role: &str,
     ) -> Result<RegistryCredentials, GatewayError> {
         let openbao_addr = self.config.openbao_addr.as_deref().ok_or_else(|| {
-            GatewayError::Internal("SMCP_GATEWAY_OPENBAO_ADDR is required".to_string())
+            GatewayError::Internal("SEAL_GATEWAY_OPENBAO_ADDR is required".to_string())
         })?;
         let openbao_token = self.config.openbao_token.as_deref().ok_or_else(|| {
-            GatewayError::Internal("SMCP_GATEWAY_OPENBAO_TOKEN is required".to_string())
+            GatewayError::Internal("SEAL_GATEWAY_OPENBAO_TOKEN is required".to_string())
         })?;
 
         if openbao_engine_path.trim().is_empty() || role.trim().is_empty() {
@@ -354,10 +354,10 @@ impl CredentialResolver {
             ));
         }
         let openbao_addr = self.config.openbao_addr.as_deref().ok_or_else(|| {
-            GatewayError::Internal("SMCP_GATEWAY_OPENBAO_ADDR is required".to_string())
+            GatewayError::Internal("SEAL_GATEWAY_OPENBAO_ADDR is required".to_string())
         })?;
         let openbao_token = self.config.openbao_token.as_deref().ok_or_else(|| {
-            GatewayError::Internal("SMCP_GATEWAY_OPENBAO_TOKEN is required".to_string())
+            GatewayError::Internal("SEAL_GATEWAY_OPENBAO_TOKEN is required".to_string())
         })?;
 
         let path = format!(
@@ -411,11 +411,11 @@ impl CredentialResolver {
             .as_deref()
             .ok_or_else(|| {
                 GatewayError::Internal(
-                    "SMCP_GATEWAY_KEYCLOAK_TOKEN_EXCHANGE_URL is required".to_string(),
+                    "SEAL_GATEWAY_KEYCLOAK_TOKEN_EXCHANGE_URL is required".to_string(),
                 )
             })?;
         let client_id = self.config.keycloak_client_id.as_deref().ok_or_else(|| {
-            GatewayError::Internal("SMCP_GATEWAY_KEYCLOAK_CLIENT_ID is required".to_string())
+            GatewayError::Internal("SEAL_GATEWAY_KEYCLOAK_CLIENT_ID is required".to_string())
         })?;
         let client_secret = self
             .config
@@ -423,7 +423,7 @@ impl CredentialResolver {
             .as_deref()
             .ok_or_else(|| {
                 GatewayError::Internal(
-                    "SMCP_GATEWAY_KEYCLOAK_CLIENT_SECRET is required".to_string(),
+                    "SEAL_GATEWAY_KEYCLOAK_CLIENT_SECRET is required".to_string(),
                 )
             })?;
 

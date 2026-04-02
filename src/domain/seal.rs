@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct SmcpEnvelope {
+pub struct SealEnvelope {
     pub security_token: String,
     pub signature: String,
     pub inner_mcp: Vec<u8>,

@@ -1,7 +1,7 @@
-apiVersion: smcp.100monkeys.ai/v1
-kind: SmcpGatewayConfig
+apiVersion: seal.100monkeys.ai/v1
+kind: SealGatewayConfig
 metadata:
-  name: aegis-smcp-gateway
+  name: aegis-seal-gateway
   version: "1.0.0"
 
 spec:
@@ -16,10 +16,10 @@ spec:
     disabled: false
     operator_jwt_public_key_pem: ""
     operator_jwt_issuer: "aegis-keycloak"
-    operator_jwt_audience: "aegis-smcp-gateway"
-    smcp_jwt_public_key_pem: ""
-    smcp_jwt_issuer: "aegis-orchestrator"
-    smcp_jwt_audience: "aegis-agents"
+    operator_jwt_audience: "aegis-seal-gateway"
+    seal_jwt_public_key_pem: ""
+    seal_jwt_issuer: "aegis-orchestrator"
+    seal_jwt_audience: "aegis-agents"
 
   credentials:
     openbao_addr: null

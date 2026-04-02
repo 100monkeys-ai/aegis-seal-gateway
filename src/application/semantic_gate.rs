@@ -60,7 +60,7 @@ impl SemanticGate {
 
         let judge_url = self.judge_url.as_ref().ok_or_else(|| {
             GatewayError::Internal(
-                "semantic judge is required for this tool but SMCP_GATEWAY_SEMANTIC_JUDGE_URL is not configured".to_string(),
+                "semantic judge is required for this tool but SEAL_GATEWAY_SEMANTIC_JUDGE_URL is not configured".to_string(),
             )
         })?;
 

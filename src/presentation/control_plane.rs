@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::domain::{
     ApiSpec, ApiSpecId, CredentialResolutionPath, EphemeralCliTool, GatewayEvent,
-    SecurityCapabilities, SecurityContext, SmcpSessionRecord, ToolWorkflow, WorkflowId,
+    SealSessionRecord, SecurityCapabilities, SecurityContext, ToolWorkflow, WorkflowId,
 };
 use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::openapi::parse_operations;
@@ -458,22 +458,22 @@ pub async fn list_tools(
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
-pub struct UpsertSmcpSessionRequest {
+pub struct UpsertSealSessionRequest {
     pub execution_id: String,
     pub agent_id: String,
     pub security_context: String,
     pub public_key_b64: String,
     pub security_token: String,
-    pub session_status: Option<crate::domain::SmcpSessionStatus>,
+    pub session_status: Option<crate::domain::SealSessionStatus>,
     pub expires_at: Option<String>,
     pub allowed_tool_patterns: Option<Vec<String>>,
 }
 
 #[utoipa::path(
     post,
-    path = "/v1/smcp/sessions",
-    tag = "SMCP Sessions",
-    request_body = UpsertSmcpSessionRequest,
+    path = "/v1/seal/sessions",
+    tag = "SEAL Sessions",
+    request_body = UpsertSealSessionRequest,
     responses(
         (status = 200, description = "Session saved"),
         (status = 400, description = "Validation error"),
@@ -481,13 +481,13 @@ pub struct UpsertSmcpSessionRequest {
     ),
     security(("bearer_jwt" = [])),
 )]
-pub async fn upsert_smcp_session(
+pub async fn upsert_seal_session(
     State(state): State<AppState>,
-    Json(req): Json<UpsertSmcpSessionRequest>,
+    Json(req): Json<UpsertSealSessionRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     state
-        .smcp_sessions
-        .save(SmcpSessionRecord {
+        .seal_sessions
+        .save(SealSessionRecord {
             execution_id: req.execution_id,
             agent_id: req.agent_id,
             security_context: req.security_context,
@@ -495,7 +495,7 @@ pub async fn upsert_smcp_session(
             security_token: req.security_token,
             session_status: req
                 .session_status
-                .unwrap_or(crate::domain::SmcpSessionStatus::Active),
+                .unwrap_or(crate::domain::SealSessionStatus::Active),
             expires_at: req
                 .expires_at
                 .as_deref()

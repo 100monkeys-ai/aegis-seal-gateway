@@ -20,7 +20,7 @@ jobs:
       - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          path: aegis-smcp-gateway
+          path: aegis-seal-gateway
 
       - name: Checkout proto repo
         uses: actions/checkout@v6
@@ -35,8 +35,8 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: aegis-smcp-gateway/Dockerfile
+          file: aegis-seal-gateway/Dockerfile
           push: false
-          tags: aegis-smcp-gateway:pr-${{ github.event.pull_request.number }}
+          tags: aegis-seal-gateway:pr-${{ github.event.pull_request.number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

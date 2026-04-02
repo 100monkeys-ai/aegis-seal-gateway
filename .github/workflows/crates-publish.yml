@@ -27,12 +27,12 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: aegis-smcp-gateway
+        working-directory: aegis-seal-gateway
     steps:
       - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          path: aegis-smcp-gateway
+          path: aegis-seal-gateway
 
       - name: Checkout proto repo
         uses: actions/checkout@v6
@@ -49,8 +49,8 @@ jobs:
       - name: Prepare proto files for packaging
         run: |
           mkdir -p proto-vendor/aegis
-          if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
-            cp ../aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+          if [ ! -f proto-vendor/aegis/seal_gateway.proto ]; then
+            cp ../aegis-proto/proto/seal_gateway.proto proto-vendor/aegis/seal_gateway.proto
           fi
 
       - name: Verify crate builds
@@ -60,17 +60,17 @@ jobs:
         run: cargo test --locked
 
   publish:
-    name: Publish aegis-smcp-gateway
+    name: Publish aegis-seal-gateway
     needs: verify
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: aegis-smcp-gateway
+        working-directory: aegis-seal-gateway
     steps:
       - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          path: aegis-smcp-gateway
+          path: aegis-seal-gateway
 
       - name: Checkout proto repo
         uses: actions/checkout@v6
@@ -87,17 +87,17 @@ jobs:
       - name: Prepare proto files for packaging
         run: |
           mkdir -p proto-vendor/aegis
-          if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
-            cp ../aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+          if [ ! -f proto-vendor/aegis/seal_gateway.proto ]; then
+            cp ../aegis-proto/proto/seal_gateway.proto proto-vendor/aegis/seal_gateway.proto
           fi
 
       - name: Publish crate
         run: |
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
-            echo "🔍 DRY RUN: Would publish aegis-smcp-gateway"
+            echo "🔍 DRY RUN: Would publish aegis-seal-gateway"
             cargo publish --locked --allow-dirty --dry-run --token ${{ secrets.CRATES_TOKEN }}
           else
-            echo "📦 Publishing aegis-smcp-gateway to crates.io..."
+            echo "📦 Publishing aegis-seal-gateway to crates.io..."
             cargo publish --locked --allow-dirty --token ${{ secrets.CRATES_TOKEN }}
           fi
 
@@ -107,12 +107,12 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: aegis-smcp-gateway
+        working-directory: aegis-seal-gateway
     steps:
       - name: Checkout gateway
         uses: actions/checkout@v6
         with:
-          path: aegis-smcp-gateway
+          path: aegis-seal-gateway
 
       - name: Checkout proto repo
         uses: actions/checkout@v6
@@ -129,8 +129,8 @@ jobs:
       - name: Prepare proto files for packaging
         run: |
           mkdir -p proto-vendor/aegis
-          if [ ! -f proto-vendor/aegis/smcp_gateway.proto ]; then
-            cp ../aegis-proto/proto/smcp_gateway.proto proto-vendor/aegis/smcp_gateway.proto
+          if [ ! -f proto-vendor/aegis/seal_gateway.proto ]; then
+            cp ../aegis-proto/proto/seal_gateway.proto proto-vendor/aegis/seal_gateway.proto
           fi
 
       - name: Generate documentation
@@ -140,7 +140,7 @@ jobs:
       - name: Log documentation URL
         run: |
           echo "📚 Documentation will be available at:"
-          echo "  - https://docs.rs/aegis-smcp-gateway"
+          echo "  - https://docs.rs/aegis-seal-gateway"
           echo ""
           echo "Note: docs.rs automatically publishes documentation after crates.io publish"
 
@@ -153,6 +153,6 @@ jobs:
       - name: Check publish status
         run: |
           echo "✅ Publishing workflow completed"
-          echo "📦 Published package: aegis-smcp-gateway"
-          echo "🔗 Crates.io: https://crates.io/crates/aegis-smcp-gateway"
-          echo "🔗 Docs.rs: https://docs.rs/aegis-smcp-gateway"
+          echo "📦 Published package: aegis-seal-gateway"
+          echo "🔗 Crates.io: https://crates.io/crates/aegis-seal-gateway"
+          echo "🔗 Docs.rs: https://docs.rs/aegis-seal-gateway"

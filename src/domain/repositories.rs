@@ -36,12 +36,12 @@ pub trait EphemeralCliToolRepository: Send + Sync {
 }
 
 #[async_trait]
-pub trait SmcpSessionRepository: Send + Sync {
-    async fn save(&self, session: SmcpSessionRecord) -> Result<(), GatewayError>;
+pub trait SealSessionRepository: Send + Sync {
+    async fn save(&self, session: SealSessionRecord) -> Result<(), GatewayError>;
     async fn find_by_execution_id(
         &self,
         execution_id: &str,
-    ) -> Result<Option<SmcpSessionRecord>, GatewayError>;
+    ) -> Result<Option<SealSessionRecord>, GatewayError>;
 }
 
 #[async_trait]
@@ -52,19 +52,19 @@ pub trait SecurityContextRepository: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub struct SmcpSessionRecord {
+pub struct SealSessionRecord {
     pub execution_id: String,
     pub agent_id: String,
     pub security_context: String,
     pub public_key_b64: String,
     pub security_token: String,
-    pub session_status: SmcpSessionStatus,
+    pub session_status: SealSessionStatus,
     pub expires_at: DateTime<Utc>,
     pub allowed_tool_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
-pub enum SmcpSessionStatus {
+pub enum SealSessionStatus {
     Active,
     Expired,
     Revoked,

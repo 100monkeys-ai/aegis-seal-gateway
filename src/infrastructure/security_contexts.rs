@@ -13,6 +13,7 @@ pub fn default_security_contexts() -> Vec<SecurityContext> {
                 max_response_size: None,
             }],
             deny_list: vec![],
+            description: Some("Unrestricted default context allowing all tools".to_string()),
             tenant_id: None,
         },
         SecurityContext {
@@ -36,6 +37,9 @@ pub fn default_security_contexts() -> Vec<SecurityContext> {
                 },
             ],
             deny_list: vec![],
+            description: Some(
+                "Internal platform context with full tool and credential access".to_string(),
+            ),
             tenant_id: None,
         },
         SecurityContext {
@@ -59,6 +63,9 @@ pub fn default_security_contexts() -> Vec<SecurityContext> {
                 },
             ],
             deny_list: vec![],
+            description: Some(
+                "Zaru free-tier context with all tools and human-delegated credentials".to_string(),
+            ),
             tenant_id: None,
         },
     ]

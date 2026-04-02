@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS seal_sessions (
 CREATE TABLE IF NOT EXISTS security_contexts (
   name TEXT PRIMARY KEY,
   capabilities TEXT NOT NULL,
-  deny_list TEXT NOT NULL DEFAULT '[]'
+  deny_list TEXT NOT NULL DEFAULT '[]',
+  description TEXT
 );
 
 CREATE TABLE IF NOT EXISTS seen_jtis (

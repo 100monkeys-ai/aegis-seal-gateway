@@ -606,6 +606,7 @@ pub struct UpsertSecurityContextRequest {
     pub capabilities: Vec<Capability>,
     #[serde(default)]
     pub deny_list: Vec<String>,
+    pub description: Option<String>,
 }
 
 #[utoipa::path(
@@ -635,6 +636,7 @@ pub async fn upsert_security_context(
             name: req.name,
             capabilities: req.capabilities,
             deny_list: req.deny_list,
+            description: req.description,
             tenant_id: None, // TODO(ADR-056): Extract from request TenantContext extension
         })
         .await

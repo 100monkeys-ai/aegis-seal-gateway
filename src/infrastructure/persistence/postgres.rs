@@ -422,15 +422,17 @@ fn seal_session_from_pg_row(
 impl SecurityContextRepository for PostgresStore {
     async fn save(&self, context: SecurityContext) -> Result<(), GatewayError> {
         sqlx::query(
-            r#"INSERT INTO security_contexts(name, capabilities, deny_list)
-               VALUES ($1, $2, $3)
+            r#"INSERT INTO security_contexts(name, capabilities, deny_list, description)
+               VALUES ($1, $2, $3, $4)
                ON CONFLICT (name) DO UPDATE SET
                  capabilities = EXCLUDED.capabilities,
-                 deny_list = EXCLUDED.deny_list"#,
+                 deny_list = EXCLUDED.deny_list,
+                 description = EXCLUDED.description"#,
         )
         .bind(context.name)
         .bind(serde_json::to_string(&context.capabilities)?)
         .bind(serde_json::to_string(&context.deny_list)?)
+        .bind(context.description)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -438,7 +440,7 @@ impl SecurityContextRepository for PostgresStore {
 
     async fn find_by_name(&self, name: &str) -> Result<Option<SecurityContext>, GatewayError> {
         let row = sqlx::query(
-            "SELECT name, capabilities, deny_list FROM security_contexts WHERE name = $1",
+            "SELECT name, capabilities, deny_list, description FROM security_contexts WHERE name = $1",
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -448,6 +450,7 @@ impl SecurityContextRepository for PostgresStore {
                 name: r.try_get("name")?,
                 capabilities: serde_json::from_str(&r.try_get::<String, _>("capabilities")?)?,
                 deny_list: serde_json::from_str(&r.try_get::<String, _>("deny_list")?)?,
+                description: r.try_get("description")?,
                 tenant_id: None,
             })
         })
@@ -456,7 +459,7 @@ impl SecurityContextRepository for PostgresStore {
 
     async fn list_all(&self) -> Result<Vec<SecurityContext>, GatewayError> {
         let rows = sqlx::query(
-            "SELECT name, capabilities, deny_list FROM security_contexts ORDER BY name",
+            "SELECT name, capabilities, deny_list, description FROM security_contexts ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -466,6 +469,7 @@ impl SecurityContextRepository for PostgresStore {
                     name: row.try_get("name")?,
                     capabilities: serde_json::from_str(&row.try_get::<String, _>("capabilities")?)?,
                     deny_list: serde_json::from_str(&row.try_get::<String, _>("deny_list")?)?,
+                    description: row.try_get("description")?,
                     tenant_id: None,
                 })
             })

@@ -8,7 +8,6 @@ pub struct SealEnvelope {
     pub security_token: String,
     pub signature: String,
     /// Raw MCP JSON-RPC payload bytes.
-    #[serde(alias = "inner_mcp")]
     pub payload: Vec<u8>,
     /// ISO-8601 UTC timestamp for replay prevention.
     #[serde(skip_serializing_if = "Option::is_none")]

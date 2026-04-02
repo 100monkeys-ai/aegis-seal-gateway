@@ -220,6 +220,9 @@ pub struct SecurityContext {
     pub capabilities: Vec<Capability>,
     /// Tool name patterns explicitly denied regardless of any matching capability.
     pub deny_list: Vec<String>,
+    /// Human-readable description of this security context's purpose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Optional tenant slug that owns this security context (ADR-056).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
@@ -356,6 +359,7 @@ mod tests {
                 max_response_size: None,
             }],
             deny_list: vec!["fs.delete".to_string()],
+            description: None,
             tenant_id: None,
         };
 
@@ -381,6 +385,7 @@ mod tests {
                 max_response_size: None,
             }],
             deny_list: vec![],
+            description: None,
             tenant_id: None,
         };
 
@@ -404,6 +409,7 @@ mod tests {
                 max_response_size: None,
             }],
             deny_list: vec![],
+            description: None,
             tenant_id: None,
         };
         assert!(ctx_with_wildcard.allows_human_delegated_credentials());
@@ -419,6 +425,7 @@ mod tests {
                 max_response_size: None,
             }],
             deny_list: vec![],
+            description: None,
             tenant_id: None,
         };
         assert!(ctx_with_cred.allows_human_delegated_credentials());
@@ -434,6 +441,7 @@ mod tests {
                 max_response_size: None,
             }],
             deny_list: vec![],
+            description: None,
             tenant_id: None,
         };
         assert!(!ctx_without.allows_human_delegated_credentials());

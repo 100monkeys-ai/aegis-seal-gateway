@@ -412,11 +412,12 @@ fn seal_session_from_sqlite_row(
 impl SecurityContextRepository for SqliteStore {
     async fn save(&self, context: SecurityContext) -> Result<(), GatewayError> {
         sqlx::query(
-            "INSERT OR REPLACE INTO security_contexts(name, capabilities, deny_list) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO security_contexts(name, capabilities, deny_list, description) VALUES (?, ?, ?, ?)",
         )
         .bind(context.name)
         .bind(serde_json::to_string(&context.capabilities)?)
         .bind(serde_json::to_string(&context.deny_list)?)
+        .bind(context.description)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -424,7 +425,7 @@ impl SecurityContextRepository for SqliteStore {
 
     async fn find_by_name(&self, name: &str) -> Result<Option<SecurityContext>, GatewayError> {
         let row = sqlx::query(
-            "SELECT name, capabilities, deny_list FROM security_contexts WHERE name = ?",
+            "SELECT name, capabilities, deny_list, description FROM security_contexts WHERE name = ?",
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -434,6 +435,7 @@ impl SecurityContextRepository for SqliteStore {
                 name: r.try_get("name")?,
                 capabilities: serde_json::from_str(&r.try_get::<String, _>("capabilities")?)?,
                 deny_list: serde_json::from_str(&r.try_get::<String, _>("deny_list")?)?,
+                description: r.try_get("description")?,
                 tenant_id: None,
             })
         })
@@ -442,7 +444,7 @@ impl SecurityContextRepository for SqliteStore {
 
     async fn list_all(&self) -> Result<Vec<SecurityContext>, GatewayError> {
         let rows = sqlx::query(
-            "SELECT name, capabilities, deny_list FROM security_contexts ORDER BY name",
+            "SELECT name, capabilities, deny_list, description FROM security_contexts ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -452,6 +454,7 @@ impl SecurityContextRepository for SqliteStore {
                     name: row.try_get("name")?,
                     capabilities: serde_json::from_str(&row.try_get::<String, _>("capabilities")?)?,
                     deny_list: serde_json::from_str(&row.try_get::<String, _>("deny_list")?)?,
+                    description: row.try_get("description")?,
                     tenant_id: None,
                 })
             })

@@ -71,6 +71,15 @@ impl std::error::Error for PolicyViolation {}
 
 // ── Capability ──
 
+/// Per-capability rate limit configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RateLimit {
+    /// Maximum number of calls allowed within the window.
+    pub calls: u32,
+    /// Window duration in seconds.
+    pub per_seconds: u32,
+}
+
 /// Fine-grained MCP tool permission with optional constraints.
 ///
 /// A value object within [`SecurityContext`]. Multiple capabilities can be
@@ -93,6 +102,9 @@ pub struct Capability {
     pub domain_allowlist: Option<Vec<String>>,
     /// Maximum allowed response body size in bytes. `None` means unlimited.
     pub max_response_size: Option<u64>,
+    /// Optional per-capability rate limit. Enforcement is deferred to a later phase.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimit>,
 }
 
 impl Capability {
@@ -220,9 +232,9 @@ pub struct SecurityContext {
     pub capabilities: Vec<Capability>,
     /// Tool name patterns explicitly denied regardless of any matching capability.
     pub deny_list: Vec<String>,
-    /// Human-readable description of this security context's purpose.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    /// Human-readable description of this security context's purpose (REQUIRED per spec).
+    #[serde(default)]
+    pub description: String,
     /// Optional tenant slug that owns this security context (ADR-056).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
@@ -298,6 +310,7 @@ mod tests {
             subcommand_allowlist: None,
             domain_allowlist: None,
             max_response_size: None,
+            rate_limit: None,
         };
         assert!(cap.allows("anything", &json!({})).is_ok());
     }
@@ -311,6 +324,7 @@ mod tests {
             subcommand_allowlist: None,
             domain_allowlist: None,
             max_response_size: None,
+            rate_limit: None,
         };
         assert!(cap
             .allows("fs.read", &json!({"path": "/workspace/test.txt"}))
@@ -330,6 +344,7 @@ mod tests {
             subcommand_allowlist: Some(vec!["build".to_string(), "check".to_string()]),
             domain_allowlist: None,
             max_response_size: None,
+            rate_limit: None,
         };
         assert!(cap
             .allows("cmd.run", &json!({"command": "cargo build"}))
@@ -357,9 +372,10 @@ mod tests {
                 subcommand_allowlist: None,
                 domain_allowlist: None,
                 max_response_size: None,
+                rate_limit: None,
             }],
             deny_list: vec!["fs.delete".to_string()],
-            description: None,
+            description: String::new(),
             tenant_id: None,
         };
 
@@ -383,9 +399,10 @@ mod tests {
                 subcommand_allowlist: None,
                 domain_allowlist: None,
                 max_response_size: None,
+                rate_limit: None,
             }],
             deny_list: vec![],
-            description: None,
+            description: String::new(),
             tenant_id: None,
         };
 
@@ -407,9 +424,10 @@ mod tests {
                 subcommand_allowlist: None,
                 domain_allowlist: None,
                 max_response_size: None,
+                rate_limit: None,
             }],
             deny_list: vec![],
-            description: None,
+            description: String::new(),
             tenant_id: None,
         };
         assert!(ctx_with_wildcard.allows_human_delegated_credentials());
@@ -423,9 +441,10 @@ mod tests {
                 subcommand_allowlist: None,
                 domain_allowlist: None,
                 max_response_size: None,
+                rate_limit: None,
             }],
             deny_list: vec![],
-            description: None,
+            description: String::new(),
             tenant_id: None,
         };
         assert!(ctx_with_cred.allows_human_delegated_credentials());
@@ -439,9 +458,10 @@ mod tests {
                 subcommand_allowlist: None,
                 domain_allowlist: None,
                 max_response_size: None,
+                rate_limit: None,
             }],
             deny_list: vec![],
-            description: None,
+            description: String::new(),
             tenant_id: None,
         };
         assert!(!ctx_without.allows_human_delegated_credentials());

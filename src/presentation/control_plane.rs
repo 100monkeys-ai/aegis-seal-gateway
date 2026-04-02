@@ -606,7 +606,8 @@ pub struct UpsertSecurityContextRequest {
     pub capabilities: Vec<Capability>,
     #[serde(default)]
     pub deny_list: Vec<String>,
-    pub description: Option<String>,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[utoipa::path(

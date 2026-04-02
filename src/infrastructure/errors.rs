@@ -48,6 +48,9 @@ pub struct SealErrorDetail {
     pub timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Optional structured details for richer error context (per spec).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 impl SealErrorResponse {
@@ -60,6 +63,7 @@ impl SealErrorResponse {
                 message: message.into(),
                 timestamp: Utc::now().to_rfc3339(),
                 request_id: None,
+                details: None,
             },
         }
     }

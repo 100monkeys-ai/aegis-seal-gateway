@@ -19,12 +19,10 @@ struct SealClaims {
     /// JWT ID for replay detection (UUID v4).
     #[serde(default)]
     jti: Option<String>,
-    /// Security context name (spec alias for security_context).
-    #[serde(default)]
-    scp: Option<String>,
-    /// Workload/container ID (spec alias for container_id).
-    #[serde(default)]
-    wid: Option<String>,
+    /// Security context name (REQUIRED per spec).
+    scp: String,
+    /// Workload/container ID (REQUIRED per spec).
+    wid: String,
 }
 
 #[allow(dead_code)] // Consumed once SEAL tool routing is wired end-to-end

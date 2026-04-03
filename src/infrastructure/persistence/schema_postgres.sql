@@ -58,3 +58,8 @@ CREATE TABLE IF NOT EXISTS gateway_events (
   payload TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- Schema evolution: idempotent column additions for databases created before these columns existed.
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_tools ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+ALTER TABLE security_contexts ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';

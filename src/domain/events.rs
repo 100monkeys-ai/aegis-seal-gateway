@@ -66,6 +66,7 @@ pub enum GatewayEvent {
         docker_image: String,
         command: String,
         args: Vec<String>,
+        tenant_id: Option<String>,
         started_at: DateTime<Utc>,
     },
     CliToolInvocationCompleted {

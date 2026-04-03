@@ -86,6 +86,9 @@ impl InvocationService {
         if call.execution_id != session.execution_id {
             return Err(GatewayError::Unauthorized);
         }
+        if call.agent_id != session.agent_id {
+            return Err(GatewayError::Unauthorized);
+        }
         if session.session_status != SealSessionStatus::Active {
             return Err(GatewayError::Unauthorized);
         }
@@ -97,7 +100,10 @@ impl InvocationService {
             .iter()
             .any(|pattern| tool_pattern_matches(pattern, &call.tool_name))
         {
-            return Err(GatewayError::Forbidden);
+            return Err(GatewayError::Seal(format!(
+                "tool not allowed: {}",
+                call.tool_name
+            )));
         }
         let security_context = self
             .security_contexts
@@ -144,6 +150,7 @@ impl InvocationService {
                     command,
                     args,
                     fsal_mounts,
+                    tenant_id: Some(call.tenant_id),
                     zaru_user_token: zaru_user_token.map(ToString::to_string),
                     allow_human_delegated_credentials: allow_human_delegated,
                 })
@@ -207,6 +214,7 @@ impl InvocationService {
                     command,
                     args: cli_args,
                     fsal_mounts,
+                    tenant_id: None,
                     zaru_user_token: zaru_user_token.map(ToString::to_string),
                     allow_human_delegated_credentials: allow_human_delegated,
                 })

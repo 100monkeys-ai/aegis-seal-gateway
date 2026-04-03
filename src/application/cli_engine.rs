@@ -33,6 +33,7 @@ pub struct CliInvocation {
     pub command: String,
     pub args: Vec<String>,
     pub fsal_mounts: Vec<CliFsalMount>,
+    pub tenant_id: Option<String>,
     pub zaru_user_token: Option<String>,
     pub allow_human_delegated_credentials: bool,
 }
@@ -160,6 +161,7 @@ impl CliEngine {
                     docker_image: tool.docker_image.clone(),
                     command: invocation.command.clone(),
                     args: invocation.args.clone(),
+                    tenant_id: invocation.tenant_id.clone(),
                     started_at: chrono::Utc::now(),
                 })?,
             )

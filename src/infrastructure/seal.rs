@@ -9,10 +9,9 @@ use crate::domain::{SealEnvelope, SealToolCall, SealToolParams};
 use crate::infrastructure::errors::GatewayError;
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // Fields deserialized from JWT; consumed as orchestrator alignment progresses
 struct SealClaims {
-    /// Subject — caller identity (REQUIRED per spec §4.2.2).
-    sub: String,
+    /// Agent ID — bound to the SEAL session (REQUIRED per spec §4.2.3).
+    agent_id: String,
     /// Execution ID — primary lookup key for sessions.
     execution_id: String,
     /// Tenant slug for multi-tenant routing.
@@ -22,15 +21,14 @@ struct SealClaims {
     #[serde(default)]
     jti: Option<String>,
     /// Security context name (REQUIRED per spec).
-    scp: String,
+    _scp: String,
     /// Workload/container ID (REQUIRED per spec).
-    wid: String,
+    _wid: String,
 }
 
-#[allow(dead_code)] // Consumed once SEAL tool routing is wired end-to-end
 pub struct SealVerifiedCall {
-    /// Subject (caller identity) from the SEAL security token.
-    pub sub: String,
+    /// Agent ID bound to the session — must match session.agent_id.
+    pub agent_id: String,
     pub execution_id: String,
     pub tool_name: String,
     pub arguments: Value,
@@ -87,7 +85,7 @@ pub fn verify_and_extract(
     .map_err(|e| GatewayError::Seal(format!("security token invalid: {e}")))?
     .claims;
 
-    let tool_call: SealToolCall = serde_json::from_slice(&envelope.payload)
+    let tool_call: SealToolCall = serde_json::from_value(envelope.payload.clone())
         .map_err(|e| GatewayError::Seal(format!("invalid payload: {e}")))?;
     if tool_call.method != "tools/call" {
         return Err(GatewayError::Seal(
@@ -99,7 +97,7 @@ pub fn verify_and_extract(
         .map_err(|e| GatewayError::Seal(format!("invalid tools/call params: {e}")))?;
 
     Ok(SealVerifiedCall {
-        sub: claims.sub,
+        agent_id: claims.agent_id,
         execution_id: claims.execution_id,
         tool_name: params.name,
         arguments: params.arguments,
@@ -108,32 +106,21 @@ pub fn verify_and_extract(
     })
 }
 
-/// Determine the message bytes that were signed, supporting both canonical
-/// (seal/v1 with timestamp) and legacy (raw payload) modes.
 fn signed_message(envelope: &SealEnvelope) -> Result<Vec<u8>, GatewayError> {
-    match (&envelope.protocol, &envelope.timestamp) {
-        (Some(protocol), Some(timestamp)) => {
-            if protocol != "seal/v1" {
-                return Err(GatewayError::Seal(format!(
-                    "unsupported SEAL protocol '{protocol}'"
-                )));
-            }
-
-            let timestamp = parse_iso8601_timestamp(timestamp)?;
-            let age_seconds = (Utc::now() - timestamp).num_seconds().abs();
-            if age_seconds > 30 {
-                return Err(GatewayError::Seal(format!(
-                    "envelope timestamp is outside the 30 second freshness window ({age_seconds}s)"
-                )));
-            }
-
-            canonical_message(&envelope.security_token, &envelope.payload, timestamp)
-        }
-        (None, None) => Ok(envelope.payload.clone()),
-        _ => Err(GatewayError::Seal(
-            "SEAL envelopes must provide both protocol and timestamp together".to_string(),
-        )),
+    if envelope.protocol != "seal/v1" {
+        return Err(GatewayError::Seal(format!(
+            "unsupported SEAL protocol '{}'",
+            envelope.protocol
+        )));
     }
+    let timestamp = parse_iso8601_timestamp(&envelope.timestamp)?;
+    let age_seconds = (Utc::now() - timestamp).num_seconds().abs();
+    if age_seconds > 30 {
+        return Err(GatewayError::Seal(format!(
+            "envelope timestamp is outside the 30 second freshness window ({age_seconds}s)"
+        )));
+    }
+    canonical_message(&envelope.security_token, &envelope.payload, timestamp)
 }
 
 fn parse_iso8601_timestamp(input: &str) -> Result<DateTime<Utc>, GatewayError> {
@@ -144,17 +131,14 @@ fn parse_iso8601_timestamp(input: &str) -> Result<DateTime<Utc>, GatewayError> {
 
 fn canonical_message(
     security_token: &str,
-    payload: &[u8],
+    payload: &Value,
     timestamp: DateTime<Utc>,
 ) -> Result<Vec<u8>, GatewayError> {
-    let payload_json: Value = serde_json::from_slice(payload)
-        .map_err(|e| GatewayError::Seal(format!("invalid payload JSON: {e}")))?;
     let canonical = serde_json::json!({
-        "payload": payload_json,
+        "payload": payload,
         "security_token": security_token,
         "timestamp": timestamp.timestamp(),
     });
-
     serde_json::to_vec(&canonical)
         .map_err(|e| GatewayError::Seal(format!("failed to serialize canonical SEAL message: {e}")))
 }

@@ -7,7 +7,6 @@ use thiserror::Error;
 /// SEAL error code constants. Not all codes are used yet — the registry is
 /// defined up-front per ADR-088 §A5 so that future call-sites can reference
 /// them without a code change to the registry itself.
-#[allow(dead_code)]
 pub mod seal_codes {
     // Envelope errors (1000-series)
     pub const MALFORMED_ENVELOPE: u32 = 1000;
@@ -27,9 +26,12 @@ pub mod seal_codes {
     pub const POLICY_VIOLATION_RATE_LIMIT_EXCEEDED: u32 = 2005;
     pub const POLICY_VIOLATION_NO_MATCHING_CAPABILITY: u32 = 2006;
 
-    // Attestation errors (3000-series)
+    // Attestation errors (3000-series) — defined for future attestation flows.
+    #[allow(dead_code)]
     pub const ATTESTATION_WORKLOAD_VERIFICATION_FAILED: u32 = 3000;
+    #[allow(dead_code)]
     pub const ATTESTATION_SCOPE_NOT_FOUND: u32 = 3001;
+    #[allow(dead_code)]
     pub const ATTESTATION_FAILED: u32 = 3002;
 }
 
@@ -68,7 +70,6 @@ impl SealErrorResponse {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_request_id(mut self, id: String) -> Self {
         self.error.request_id = Some(id);
         self
@@ -80,12 +81,24 @@ pub fn classify_seal_error(msg: &str) -> u32 {
     use seal_codes::*;
 
     let lower = msg.to_lowercase();
-    if lower.contains("signature") {
+    if lower.contains("invalid signature")
+        || lower.contains("bad signature")
+        || lower.contains("signature b64")
+        || lower.contains("signature must be")
+    {
+        INVALID_SIGNATURE
+    } else if lower.contains("signature") {
         SIGNATURE_VERIFICATION_FAILED
-    } else if lower.contains("timestamp") || lower.contains("freshness") || lower.contains("replay")
+    } else if lower.contains("timestamp")
+        || lower.contains("freshness")
+        || lower.contains("replay")
+        || lower.contains("duplicate jti")
     {
         TOKEN_EXPIRED
-    } else if lower.contains("token invalid") || lower.contains("jwt") {
+    } else if lower.contains("token invalid")
+        || lower.contains("jwt")
+        || lower.contains("security token")
+    {
         TOKEN_VERIFICATION_FAILED
     } else if lower.contains("session not found") {
         SESSION_NOT_FOUND
@@ -93,6 +106,24 @@ pub fn classify_seal_error(msg: &str) -> u32 {
         && (lower.contains("expired") || lower.contains("revoked") || lower.contains("inactive"))
     {
         SESSION_INACTIVE
+    } else if lower.contains("tool denied") {
+        POLICY_VIOLATION_TOOL_DENIED
+    } else if lower.contains("tool not allowed") {
+        POLICY_VIOLATION_TOOL_NOT_ALLOWED
+    } else if lower.contains("path")
+        && (lower.contains("boundary")
+            || lower.contains("not allowed")
+            || lower.contains("outside"))
+    {
+        POLICY_VIOLATION_PATH_NOT_ALLOWED
+    } else if lower.contains("command") && lower.contains("not allowed") {
+        POLICY_VIOLATION_COMMAND_NOT_ALLOWED
+    } else if lower.contains("domain") && lower.contains("not allowed") {
+        POLICY_VIOLATION_DOMAIN_NOT_ALLOWED
+    } else if lower.contains("rate limit") {
+        POLICY_VIOLATION_RATE_LIMIT_EXCEEDED
+    } else if lower.contains("no matching capability") || lower.contains("capability") {
+        POLICY_VIOLATION_NO_MATCHING_CAPABILITY
     } else {
         // Covers "malformed", "invalid", and any unrecognised message.
         MALFORMED_ENVELOPE
@@ -155,11 +186,18 @@ impl From<crate::domain::PolicyViolation> for GatewayError {
     fn from(violation: crate::domain::PolicyViolation) -> Self {
         use crate::domain::PolicyViolation;
         match violation {
-            PolicyViolation::ToolDenied { .. } | PolicyViolation::ToolNotAllowed { .. } => {
-                Self::Forbidden
+            PolicyViolation::ToolDenied { tool_name } => {
+                Self::Seal(format!("tool denied: {tool_name}"))
             }
-            PolicyViolation::PathOutsideBoundary { .. } => Self::Forbidden,
-            PolicyViolation::DomainNotAllowed { .. } => Self::Forbidden,
+            PolicyViolation::ToolNotAllowed { tool_name, .. } => {
+                Self::Seal(format!("tool not allowed: {tool_name}"))
+            }
+            PolicyViolation::PathOutsideBoundary { path, .. } => {
+                Self::Seal(format!("path outside boundary: {}", path.display()))
+            }
+            PolicyViolation::DomainNotAllowed { domain, .. } => {
+                Self::Seal(format!("domain not allowed: {domain}"))
+            }
         }
     }
 }

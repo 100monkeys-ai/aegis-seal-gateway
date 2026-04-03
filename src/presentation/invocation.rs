@@ -2,6 +2,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::application::ApiExplorerRequest;
 use crate::domain::SealEnvelope;
@@ -18,10 +19,12 @@ fn seal_error_response(err: GatewayError) -> (StatusCode, Json<Value>) {
         GatewayError::Seal(ref msg) => {
             let code = classify_seal_error(msg);
             let status = match code {
-                1002..=1006 => StatusCode::UNAUTHORIZED,
+                1001..=1006 => StatusCode::UNAUTHORIZED,
+                2000..=2999 => StatusCode::FORBIDDEN,
                 _ => StatusCode::BAD_REQUEST,
             };
-            let body = SealErrorResponse::new(code, msg.clone());
+            let body = SealErrorResponse::new(code, msg.clone())
+                .with_request_id(Uuid::new_v4().to_string());
             (
                 status,
                 Json(serde_json::to_value(body).unwrap_or_else(|_| json!({"error": msg}))),

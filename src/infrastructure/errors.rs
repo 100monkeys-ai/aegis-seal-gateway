@@ -26,12 +26,9 @@ pub mod seal_codes {
     pub const POLICY_VIOLATION_RATE_LIMIT_EXCEEDED: u32 = 2005;
     pub const POLICY_VIOLATION_NO_MATCHING_CAPABILITY: u32 = 2006;
 
-    // Attestation errors (3000-series) — defined for future attestation flows.
-    #[allow(dead_code)]
+    // Attestation errors (3000-series).
     pub const ATTESTATION_WORKLOAD_VERIFICATION_FAILED: u32 = 3000;
-    #[allow(dead_code)]
     pub const ATTESTATION_SCOPE_NOT_FOUND: u32 = 3001;
-    #[allow(dead_code)]
     pub const ATTESTATION_FAILED: u32 = 3002;
 }
 
@@ -124,6 +121,12 @@ pub fn classify_seal_error(msg: &str) -> u32 {
         POLICY_VIOLATION_RATE_LIMIT_EXCEEDED
     } else if lower.contains("no matching capability") || lower.contains("capability") {
         POLICY_VIOLATION_NO_MATCHING_CAPABILITY
+    } else if lower.contains("security context mismatch") || lower.contains("scp") {
+        ATTESTATION_SCOPE_NOT_FOUND
+    } else if lower.contains("workload") || lower.contains("wid") {
+        ATTESTATION_WORKLOAD_VERIFICATION_FAILED
+    } else if lower.contains("attestation") {
+        ATTESTATION_FAILED
     } else {
         // Covers "malformed", "invalid", and any unrecognised message.
         MALFORMED_ENVELOPE

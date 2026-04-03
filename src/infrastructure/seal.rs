@@ -10,32 +10,34 @@ use crate::infrastructure::errors::GatewayError;
 
 #[derive(Debug, Clone, Deserialize)]
 struct SealClaims {
-    /// Agent ID — bound to the SEAL session (REQUIRED per spec §4.2.3).
-    agent_id: String,
+    /// Subject — agent ID bound to the SEAL session (REQUIRED per spec §4.2.3).
+    sub: String,
     /// Execution ID — primary lookup key for sessions.
-    execution_id: String,
+    exec_id: String,
     /// Tenant slug for multi-tenant routing.
     #[serde(default)]
     tenant_id: String,
     /// JWT ID for replay detection (UUID v4).
     #[serde(default)]
     jti: Option<String>,
-    /// Security context name (REQUIRED per spec).
-    _scp: String,
-    /// Workload/container ID (REQUIRED per spec).
-    _wid: String,
+    /// Security context name (REQUIRED per spec §4.2.2).
+    scp: String,
+    /// Workload/container ID (REQUIRED per spec §4.2.2).
+    wid: String,
 }
 
 pub struct SealVerifiedCall {
-    /// Agent ID bound to the session — must match session.agent_id.
-    pub agent_id: String,
-    pub execution_id: String,
+    /// Subject (agent ID) bound to the session — must match session.agent_id.
+    pub sub: String,
+    pub exec_id: String,
     pub tool_name: String,
     pub arguments: Value,
     /// Tenant slug extracted from the SEAL security token.
     pub tenant_id: String,
     /// JWT ID for replay detection.
     pub jti: Option<String>,
+    /// Security context name from the token — validated against the session.
+    pub scp: String,
 }
 
 pub fn verify_and_extract(
@@ -85,6 +87,14 @@ pub fn verify_and_extract(
     .map_err(|e| GatewayError::Seal(format!("security token invalid: {e}")))?
     .claims;
 
+    // wid is REQUIRED per spec §4.2.2 and must be non-empty (presence is enforced by
+    // deserialization; emptiness is an additional validity check).
+    if claims.wid.trim().is_empty() {
+        return Err(GatewayError::Seal(
+            "security token wid claim is empty".to_string(),
+        ));
+    }
+
     let tool_call: SealToolCall = serde_json::from_value(envelope.payload.clone())
         .map_err(|e| GatewayError::Seal(format!("invalid payload: {e}")))?;
     if tool_call.method != "tools/call" {
@@ -97,12 +107,13 @@ pub fn verify_and_extract(
         .map_err(|e| GatewayError::Seal(format!("invalid tools/call params: {e}")))?;
 
     Ok(SealVerifiedCall {
-        agent_id: claims.agent_id,
-        execution_id: claims.execution_id,
+        sub: claims.sub,
+        exec_id: claims.exec_id,
         tool_name: params.name,
         arguments: params.arguments,
         tenant_id: claims.tenant_id,
         jti: claims.jti,
+        scp: claims.scp,
     })
 }
 

@@ -52,9 +52,9 @@ impl InvocationService {
     ) -> Result<Value, GatewayError> {
         let unsecured_claims: serde_json::Value = decode_unverified(&envelope.security_token)?;
         let execution_id = unsecured_claims
-            .get("execution_id")
+            .get("exec_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GatewayError::Seal("security token missing execution_id".to_string()))?;
+            .ok_or_else(|| GatewayError::Seal("security token missing exec_id".to_string()))?;
 
         let session = self
             .seal_sessions
@@ -70,23 +70,35 @@ impl InvocationService {
             &self.config.seal_jwt_audience,
         )?;
 
-        // JTI deduplication — reject replayed tokens (ADR-088 A7).
-        if let Some(ref jti) = call.jti {
-            let jti_expiry = session
-                .expires_at
-                .min(chrono::Utc::now() + chrono::Duration::hours(1));
-            let is_new = self.jti_repo.record_jti(jti, jti_expiry).await?;
-            if !is_new {
-                return Err(GatewayError::Seal(
-                    "duplicate JTI — replay detected".to_string(),
-                ));
-            }
+        // JTI is REQUIRED — absence indicates a forged/legacy token (SEAL spec §9.1).
+        let jti = call
+            .jti
+            .as_deref()
+            .ok_or_else(|| GatewayError::Seal("security token missing jti".to_string()))?;
+
+        // JTI deduplication — reject replayed tokens within the 30s freshness window (SEAL spec §9.1).
+        let jti_expiry = session
+            .expires_at
+            .min(chrono::Utc::now() + chrono::Duration::seconds(30));
+        let is_new = self.jti_repo.record_jti(jti, jti_expiry).await?;
+        if !is_new {
+            return Err(GatewayError::Seal(
+                "duplicate JTI — replay detected".to_string(),
+            ));
         }
 
-        if call.execution_id != session.execution_id {
+        // scp claim must match the session's security context (SEAL spec §4.2.2).
+        if call.scp != session.security_context {
+            return Err(GatewayError::Seal(
+                "security context mismatch: scp claim does not match session security_context"
+                    .to_string(),
+            ));
+        }
+
+        if call.exec_id != session.execution_id {
             return Err(GatewayError::Unauthorized);
         }
-        if call.agent_id != session.agent_id {
+        if call.sub != session.agent_id {
             return Err(GatewayError::Unauthorized);
         }
         if session.session_status != SealSessionStatus::Active {
@@ -144,7 +156,7 @@ impl InvocationService {
 
             self.cli_engine
                 .invoke(CliInvocation {
-                    execution_id: call.execution_id,
+                    execution_id: call.exec_id,
                     security_context: session.security_context,
                     tool_name: call.tool_name,
                     command,
@@ -158,7 +170,7 @@ impl InvocationService {
         } else {
             self.workflow_engine
                 .invoke_by_name(
-                    &call.execution_id,
+                    &call.exec_id,
                     &call.tool_name,
                     call.arguments,
                     zaru_user_token,

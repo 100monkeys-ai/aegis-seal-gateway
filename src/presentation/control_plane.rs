@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
@@ -8,6 +8,7 @@ use crate::domain::{
     ApiSpec, ApiSpecId, Capability, CredentialResolutionPath, EphemeralCliTool, GatewayEvent,
     SealSessionRecord, SecurityContext, ToolWorkflow, WorkflowId,
 };
+use crate::infrastructure::auth::TenantContext;
 use crate::infrastructure::errors::{classify_seal_error, GatewayError, SealErrorResponse};
 use crate::infrastructure::openapi::parse_operations;
 use crate::presentation::state::AppState;
@@ -624,6 +625,7 @@ pub struct UpsertSecurityContextRequest {
 )]
 pub async fn upsert_security_context(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(req): Json<UpsertSecurityContextRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if req.name.trim().is_empty() {
@@ -638,7 +640,7 @@ pub async fn upsert_security_context(
             capabilities: req.capabilities,
             deny_list: req.deny_list,
             description: req.description,
-            tenant_id: None, // TODO(ADR-056): Extract from request TenantContext extension
+            tenant_id: tenant.0,
         })
         .await
         .map_err(error_response)?;

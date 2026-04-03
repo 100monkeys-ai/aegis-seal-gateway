@@ -60,7 +60,6 @@ pub trait JtiRepository: Send + Sync {
     async fn record_jti(&self, jti: &str, expires_at: DateTime<Utc>) -> Result<bool, GatewayError>;
 
     /// Remove expired JTI entries (called by periodic maintenance).
-    #[allow(dead_code)]
     async fn cleanup_expired(&self) -> Result<u64, GatewayError>;
 }
 

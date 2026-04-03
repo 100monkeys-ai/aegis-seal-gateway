@@ -102,6 +102,20 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     }
 
+    // Periodic JTI cleanup — purge expired entries every 30 seconds.
+    {
+        let jti_cleanup = jti_repo.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                if let Err(e) = jti_cleanup.cleanup_expired().await {
+                    tracing::warn!("JTI cleanup failed: {e}");
+                }
+            }
+        });
+    }
+
     let http_client = HttpClient::new()?;
     let credential_resolver = CredentialResolver::new(config.clone());
     let semantic_gate = SemanticGate::new(config.semantic_judge_url.clone());

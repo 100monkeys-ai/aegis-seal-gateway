@@ -50,7 +50,6 @@ pub async fn require_operator(
 
 /// Extracted tenant identity from an authenticated request (ADR-056).
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Field will be consumed once ADR-056 tenant routing is wired
 pub struct TenantContext(pub Option<String>);
 
 pub fn verify_operator_token(

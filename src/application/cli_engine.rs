@@ -502,6 +502,7 @@ mod tests {
                     mount_path: "/workspace".to_string(),
                     read_only: false,
                 }],
+                tenant_id: None,
                 zaru_user_token: Some("user-token".to_string()),
                 allow_human_delegated_credentials: false,
             })

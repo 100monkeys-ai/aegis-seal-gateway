@@ -20,7 +20,7 @@ use domain::{
     ApiSpecRepository, EphemeralCliToolRepository, JtiRepository, SealSessionRecord,
     SealSessionRepository, SecurityContextRepository, ToolWorkflowRepository,
 };
-use infrastructure::auth::require_operator;
+use infrastructure::auth::{inject_seal_tenant_context, require_operator};
 use infrastructure::config::GatewayConfig;
 use infrastructure::http_client::HttpClient;
 use infrastructure::persistence::postgres::PostgresStore;
@@ -196,11 +196,15 @@ async fn main() -> anyhow::Result<()> {
             require_operator,
         ));
 
+    let seal_invoke_routes = Router::new()
+        .route("/v1/invoke", post(invoke_seal))
+        .route("/v1/seal/invoke", post(invoke_seal))
+        .layer(middleware::from_fn(inject_seal_tenant_context));
+
     let mut app = Router::new()
         .merge(SwaggerUi::new("/api-docs").url("/openapi.json", openapi_spec()))
         .merge(operator_routes)
-        .route("/v1/invoke", post(invoke_seal))
-        .route("/v1/seal/invoke", post(invoke_seal))
+        .merge(seal_invoke_routes)
         .route("/health", get(|| async { "ok" }))
         .with_state(state.clone());
     if config.ui_enabled {

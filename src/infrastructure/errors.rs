@@ -201,6 +201,25 @@ impl From<crate::domain::PolicyViolation> for GatewayError {
             PolicyViolation::DomainNotAllowed { domain, .. } => {
                 Self::Seal(format!("domain not allowed: {domain}"))
             }
+            PolicyViolation::CommandNotAllowed { command, .. } => {
+                Self::Seal(format!("command not allowed: {command}"))
+            }
+            PolicyViolation::SubcommandNotAllowed {
+                base_command,
+                subcommand,
+                ..
+            } => Self::Seal(format!(
+                "subcommand not allowed: {base_command} {subcommand}"
+            )),
+            PolicyViolation::ConcurrentExecLimitExceeded { limit } => {
+                Self::Seal(format!("concurrent execution limit exceeded: {limit}"))
+            }
+            PolicyViolation::OutputSizeLimitExceeded {
+                actual_bytes,
+                max_bytes,
+            } => Self::Seal(format!(
+                "output size limit exceeded: {actual_bytes} bytes (max {max_bytes})"
+            )),
         }
     }
 }

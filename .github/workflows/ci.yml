@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026 100monkeys.ai
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check & Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: aegis-seal-gateway
+      - uses: actions/checkout@v6
+        with:
+          repository: 100monkeys-ai/aegis-proto
+          path: aegis-proto
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo registry & build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: aegis-seal-gateway -> target
+      - name: Cargo check
+        working-directory: aegis-seal-gateway
+        run: cargo check --locked
+      - name: Clippy
+        working-directory: aegis-seal-gateway
+        run: cargo clippy --locked -- -D warnings
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: aegis-seal-gateway
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        working-directory: aegis-seal-gateway
+        run: cargo fmt --all -- --check
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: aegis-seal-gateway
+      - uses: actions/checkout@v6
+        with:
+          repository: 100monkeys-ai/aegis-proto
+          path: aegis-proto
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry & build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: aegis-seal-gateway -> target
+      - name: Run tests
+        working-directory: aegis-seal-gateway
+        run: cargo test --locked

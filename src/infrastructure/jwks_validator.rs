@@ -46,6 +46,7 @@ pub struct JwtClaims {
     pub tenant_id: Option<String>,
 }
 
+#[derive(Debug)]
 pub struct JwksValidator {
     jwks_uri: String,
     ttl: Duration,

@@ -82,7 +82,7 @@ impl ExplorerService {
 
         let headers = match self
             .credential_resolver
-            .resolve(&spec.credential_path, zaru_user_token)
+            .resolve(&spec.credential_path, zaru_user_token, None)
             .await
         {
             Ok(headers) => {

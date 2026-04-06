@@ -27,6 +27,7 @@ pub struct InvocationService {
 }
 
 impl InvocationService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         workflow_engine: WorkflowEngine,
         cli_engine: CliEngine,

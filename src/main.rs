@@ -192,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/tools", get(list_tools))
         .route("/v1/explorer", post(explore_api))
         .layer(middleware::from_fn_with_state(
-            config.clone(),
+            state.clone(),
             require_operator,
         ));
 

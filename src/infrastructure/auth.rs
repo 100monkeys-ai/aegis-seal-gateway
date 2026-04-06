@@ -8,13 +8,14 @@ use axum::{
 
 use crate::infrastructure::config::GatewayConfig;
 use crate::infrastructure::jwks_validator::JwtClaims;
+use crate::presentation::state::AppState;
 
 pub async fn require_operator(
-    State(config): State<GatewayConfig>,
+    State(app_state): State<AppState>,
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    if config.auth_disabled {
+    if app_state.config.auth_disabled {
         return Ok(next.run(request).await);
     }
 
@@ -29,7 +30,7 @@ pub async fn require_operator(
         .or_else(|| auth.strip_prefix("bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let tenant_id = verify_operator_token(&config, token).await?;
+    let tenant_id = verify_operator_token(&app_state.config, token).await?;
 
     // Inject tenant context into request extensions for downstream handlers (ADR-056).
     let mut request = request;

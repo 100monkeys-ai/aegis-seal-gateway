@@ -14,7 +14,8 @@ spec:
 
   auth:
     disabled: false
-    operator_jwt_public_key_pem: ""
+    operator_jwks_uri: "env:SEAL_GATEWAY_OPERATOR_JWKS_URI"
+    jwks_cache_ttl_secs: 300
     operator_jwt_issuer: "aegis-keycloak"
     operator_jwt_audience: "aegis-seal-gateway"
     seal_jwt_public_key_pem: ""

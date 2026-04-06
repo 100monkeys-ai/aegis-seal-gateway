@@ -22,13 +22,13 @@ impl GatewayGrpcService {
     }
 
     #[allow(clippy::result_large_err)]
-    fn require_operator_metadata(&self, metadata: &MetadataMap) -> Result<(), Status> {
-        require_operator_metadata_for_config(&self.state.config, metadata)
+    async fn require_operator_metadata(&self, metadata: &MetadataMap) -> Result<(), Status> {
+        require_operator_metadata_for_config(&self.state.config, metadata).await
     }
 }
 
 #[allow(clippy::result_large_err)]
-fn require_operator_metadata_for_config(
+async fn require_operator_metadata_for_config(
     config: &crate::infrastructure::config::GatewayConfig,
     metadata: &MetadataMap,
 ) -> Result<(), Status> {
@@ -45,13 +45,17 @@ fn require_operator_metadata_for_config(
         .or_else(|| auth.strip_prefix("bearer "))
         .ok_or_else(|| Status::unauthenticated("invalid bearer metadata"))?;
 
-    verify_operator_token(config, token).map_err(|status| match status {
-        axum::http::StatusCode::UNAUTHORIZED => {
-            Status::unauthenticated("operator token validation failed")
-        }
-        axum::http::StatusCode::FORBIDDEN => Status::permission_denied("operator role required"),
-        _ => Status::internal("operator auth failure"),
-    })?;
+    verify_operator_token(config, token)
+        .await
+        .map_err(|status| match status {
+            axum::http::StatusCode::UNAUTHORIZED => {
+                Status::unauthenticated("operator token validation failed")
+            }
+            axum::http::StatusCode::FORBIDDEN => {
+                Status::permission_denied("operator role required")
+            }
+            _ => Status::internal("operator auth failure"),
+        })?;
 
     Ok(())
 }
@@ -62,7 +66,7 @@ impl proto::tool_workflow_service_server::ToolWorkflowService for GatewayGrpcSer
         &self,
         request: Request<proto::CreateWorkflowRequest>,
     ) -> Result<Response<proto::CreateWorkflowResponse>, Status> {
-        self.require_operator_metadata(request.metadata())?;
+        self.require_operator_metadata(request.metadata()).await?;
         let workflow = request
             .into_inner()
             .workflow
@@ -101,7 +105,7 @@ impl proto::tool_workflow_service_server::ToolWorkflowService for GatewayGrpcSer
         &self,
         request: Request<proto::GetWorkflowRequest>,
     ) -> Result<Response<proto::GetWorkflowResponse>, Status> {
-        self.require_operator_metadata(request.metadata())?;
+        self.require_operator_metadata(request.metadata()).await?;
         let id = parse_uuid_wrapped(&request.into_inner().workflow_id).map_err(invalid)?;
         let workflow = self
             .state
@@ -120,7 +124,7 @@ impl proto::tool_workflow_service_server::ToolWorkflowService for GatewayGrpcSer
         &self,
         request: Request<proto::ListWorkflowsRequest>,
     ) -> Result<Response<proto::ListWorkflowsResponse>, Status> {
-        self.require_operator_metadata(request.metadata())?;
+        self.require_operator_metadata(request.metadata()).await?;
         let workflows = self
             .state
             .workflows
@@ -142,7 +146,7 @@ impl proto::tool_workflow_service_server::ToolWorkflowService for GatewayGrpcSer
         &self,
         request: Request<proto::UpdateWorkflowRequest>,
     ) -> Result<Response<proto::UpdateWorkflowResponse>, Status> {
-        self.require_operator_metadata(request.metadata())?;
+        self.require_operator_metadata(request.metadata()).await?;
         let workflow = request
             .into_inner()
             .workflow
@@ -183,7 +187,7 @@ impl proto::tool_workflow_service_server::ToolWorkflowService for GatewayGrpcSer
         &self,
         request: Request<proto::DeleteWorkflowRequest>,
     ) -> Result<Response<proto::DeleteWorkflowResponse>, Status> {
-        self.require_operator_metadata(request.metadata())?;
+        self.require_operator_metadata(request.metadata()).await?;
         let id = parse_uuid(&request.into_inner().workflow_id).map_err(invalid)?;
         self.state
             .workflows
@@ -279,7 +283,7 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         &self,
         request: Request<proto::ExploreApiRequest>,
     ) -> Result<Response<proto::ExploreApiResponse>, Status> {
-        self.require_operator_metadata(request.metadata())?;
+        self.require_operator_metadata(request.metadata()).await?;
         let req = request.into_inner();
         let parameters: Value = serde_json::from_str(&req.parameters_json)
             .map_err(|e| Status::invalid_argument(format!("invalid parameters_json: {e}")))?;
@@ -489,7 +493,11 @@ mod tests {
             bind_addr: "127.0.0.1:8089".to_string(),
             grpc_bind_addr: "127.0.0.1:50055".to_string(),
             database_url: "sqlite::memory:".to_string(),
-            operator_jwt_public_key_pem: String::new(),
+            operator_jwks_uri: String::new(),
+            jwks_cache_ttl_secs: 300,
+            jwks_validator: std::sync::Arc::new(
+                crate::infrastructure::jwks_validator::JwksValidator::new(String::new(), 300),
+            ),
             operator_jwt_issuer: "issuer".to_string(),
             operator_jwt_audience: "audience".to_string(),
             auth_disabled,
@@ -511,19 +519,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn operator_authz_rejects_missing_metadata() {
+    #[tokio::test]
+    async fn operator_authz_rejects_missing_metadata() {
         let config = test_config(false);
         let metadata = MetadataMap::new();
-        let result = require_operator_metadata_for_config(&config, &metadata);
+        let result = require_operator_metadata_for_config(&config, &metadata).await;
         assert!(matches!(result, Err(status) if status.code() == tonic::Code::Unauthenticated));
     }
 
-    #[test]
-    fn operator_authz_bypasses_when_disabled() {
+    #[tokio::test]
+    async fn operator_authz_bypasses_when_disabled() {
         let config = test_config(true);
         let metadata = MetadataMap::new();
-        let result = require_operator_metadata_for_config(&config, &metadata);
+        let result = require_operator_metadata_for_config(&config, &metadata).await;
         assert!(result.is_ok());
     }
 }

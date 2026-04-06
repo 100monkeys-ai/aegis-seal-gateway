@@ -55,7 +55,9 @@ pub struct GatewayAuthConfig {
     #[serde(default)]
     pub disabled: bool,
     #[serde(default)]
-    pub operator_jwt_public_key_pem: String,
+    pub operator_jwks_uri: String,
+    #[serde(default = "default_jwks_cache_ttl_secs")]
+    pub jwks_cache_ttl_secs: u64,
     #[serde(default = "default_operator_jwt_issuer")]
     pub operator_jwt_issuer: String,
     #[serde(default = "default_operator_jwt_audience")]
@@ -140,7 +142,8 @@ impl Default for GatewayAuthConfig {
     fn default() -> Self {
         Self {
             disabled: false,
-            operator_jwt_public_key_pem: String::new(),
+            operator_jwks_uri: String::new(),
+            jwks_cache_ttl_secs: default_jwks_cache_ttl_secs(),
             operator_jwt_issuer: default_operator_jwt_issuer(),
             operator_jwt_audience: default_operator_jwt_audience(),
             seal_jwt_public_key_pem: String::new(),
@@ -205,7 +208,7 @@ impl SealGatewayConfigManifest {
         resolve_env_string(&mut self.spec.network.bind_addr);
         resolve_env_string(&mut self.spec.network.grpc_bind_addr);
         resolve_env_string(&mut self.spec.database.url);
-        resolve_env_string(&mut self.spec.auth.operator_jwt_public_key_pem);
+        resolve_env_string(&mut self.spec.auth.operator_jwks_uri);
         resolve_env_string(&mut self.spec.auth.operator_jwt_issuer);
         resolve_env_string(&mut self.spec.auth.operator_jwt_audience);
         resolve_env_string(&mut self.spec.auth.seal_jwt_public_key_pem);
@@ -290,8 +293,13 @@ impl SealGatewayConfigManifest {
         if let Ok(value) = std::env::var("SEAL_GATEWAY_AUTH_DISABLED") {
             self.spec.auth.disabled = value.eq_ignore_ascii_case("true");
         }
-        if let Ok(value) = std::env::var("SEAL_GATEWAY_OPERATOR_JWT_PUBLIC_KEY_PEM") {
-            self.spec.auth.operator_jwt_public_key_pem = value;
+        if let Ok(v) = std::env::var("SEAL_GATEWAY_OPERATOR_JWKS_URI") {
+            self.spec.auth.operator_jwks_uri = v;
+        }
+        if let Ok(v) = std::env::var("SEAL_GATEWAY_JWKS_CACHE_TTL_SECS") {
+            if let Ok(n) = v.parse::<u64>() {
+                self.spec.auth.jwks_cache_ttl_secs = n;
+            }
         }
         if let Ok(value) = std::env::var("SEAL_GATEWAY_OPERATOR_JWT_ISSUER") {
             if !value.trim().is_empty() {
@@ -386,6 +394,9 @@ impl SealGatewayConfigManifest {
         if self.spec.database.url.trim().is_empty() {
             anyhow::bail!("spec.database.url cannot be empty");
         }
+        if !self.spec.auth.disabled && self.spec.auth.operator_jwks_uri.trim().is_empty() {
+            anyhow::bail!("spec.auth.operator_jwks_uri is required when auth is enabled");
+        }
         Ok(())
     }
 }
@@ -410,6 +421,9 @@ fn default_seal_jwt_issuer() -> String {
 }
 fn default_seal_jwt_audience() -> String {
     "aegis-agents".to_string()
+}
+fn default_jwks_cache_ttl_secs() -> u64 {
+    300
 }
 fn default_openbao_kv_mount() -> String {
     "secret".to_string()
@@ -486,7 +500,7 @@ spec:
     url: sqlite://gateway.db
   auth:
     disabled: true
-    operator_jwt_public_key_pem: ""
+    operator_jwks_uri: "https://auth.example.com/realms/aegis/protocol/openid-connect/certs"
     operator_jwt_issuer: issuer
     operator_jwt_audience: audience
     seal_jwt_public_key_pem: ""

@@ -6,7 +6,9 @@ pub struct GatewayConfig {
     pub bind_addr: String,
     pub grpc_bind_addr: String,
     pub database_url: String,
-    pub operator_jwt_public_key_pem: String,
+    pub operator_jwks_uri: String,
+    pub jwks_cache_ttl_secs: u64,
+    pub jwks_validator: std::sync::Arc<crate::infrastructure::jwks_validator::JwksValidator>,
     pub operator_jwt_issuer: String,
     pub operator_jwt_audience: String,
     pub auth_disabled: bool,
@@ -34,11 +36,19 @@ impl GatewayConfig {
         let version = container_cli::validate_container_cli(&resolved_cli)?;
         tracing::info!(binary = %resolved_cli, version = %version, "Container CLI resolved");
 
+        let jwks_validator =
+            std::sync::Arc::new(crate::infrastructure::jwks_validator::JwksValidator::new(
+                manifest.spec.auth.operator_jwks_uri.clone(),
+                manifest.spec.auth.jwks_cache_ttl_secs,
+            ));
+
         Ok(Self {
             bind_addr: manifest.spec.network.bind_addr,
             grpc_bind_addr: manifest.spec.network.grpc_bind_addr,
             database_url: manifest.spec.database.url,
-            operator_jwt_public_key_pem: manifest.spec.auth.operator_jwt_public_key_pem,
+            operator_jwks_uri: manifest.spec.auth.operator_jwks_uri,
+            jwks_cache_ttl_secs: manifest.spec.auth.jwks_cache_ttl_secs,
+            jwks_validator,
             operator_jwt_issuer: manifest.spec.auth.operator_jwt_issuer,
             operator_jwt_audience: manifest.spec.auth.operator_jwt_audience,
             auth_disabled: manifest.spec.auth.disabled,

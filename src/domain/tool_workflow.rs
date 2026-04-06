@@ -30,6 +30,8 @@ pub struct ToolWorkflow {
     pub api_spec_id: ApiSpecId,
     pub steps: Vec<WorkflowStep>,
     pub created_at: DateTime<Utc>,
+    /// Tenant that owns this workflow. `None` = system-global (visible to all tenants).
+    pub tenant_id: Option<String>,
 }
 
 impl ToolWorkflow {
@@ -64,6 +66,7 @@ impl ToolWorkflow {
             api_spec_id,
             steps,
             created_at: Utc::now(),
+            tenant_id: None,
         })
     }
 }

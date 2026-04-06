@@ -113,6 +113,7 @@ impl CliEngine {
                     path,
                     invocation.zaru_user_token.as_deref(),
                     invocation.allow_human_delegated_credentials,
+                    invocation.tenant_id.as_deref(),
                 )
                 .await
             {
@@ -403,7 +404,10 @@ mod tests {
             Ok(self.tools.read().await.get(name).cloned())
         }
 
-        async fn list_all(&self) -> Result<Vec<EphemeralCliToolSummary>, GatewayError> {
+        async fn list_for_tenant(
+            &self,
+            _tenant_id: Option<&str>,
+        ) -> Result<Vec<EphemeralCliToolSummary>, GatewayError> {
             Ok(self
                 .tools
                 .read()
@@ -482,6 +486,7 @@ mod tests {
             registry_credential_path: Some(CredentialResolutionPath::HumanDelegated {
                 target_service: "ghcr.io".to_string(),
             }),
+            tenant_id: None,
         })
         .await
         .expect("seed tool");

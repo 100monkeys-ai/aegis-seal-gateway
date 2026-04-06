@@ -12,6 +12,8 @@ pub struct EphemeralCliTool {
     pub require_semantic_judge: bool,
     pub default_timeout_seconds: u32,
     pub registry_credential_path: Option<CredentialResolutionPath>,
+    /// Tenant that owns this CLI tool. `None` = system-global (visible to all tenants).
+    pub tenant_id: Option<String>,
 }
 
 impl EphemeralCliTool {
@@ -63,6 +65,7 @@ mod tests {
             require_semantic_judge: true,
             default_timeout_seconds: 301,
             registry_credential_path: None,
+            tenant_id: None,
         };
         assert!(tool.validate().is_err());
     }
@@ -77,6 +80,7 @@ mod tests {
             require_semantic_judge: true,
             default_timeout_seconds: 60,
             registry_credential_path: None,
+            tenant_id: None,
         };
         assert!(tool.validate().is_err());
     }

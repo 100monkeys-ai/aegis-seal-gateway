@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
             )
         };
 
-    if security_contexts.list_all().await?.is_empty() {
+    if security_contexts.list_for_tenant(None).await?.is_empty() {
         for context in default_security_contexts() {
             security_contexts.save(context).await?;
         }
@@ -98,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
                 session_status: domain::SealSessionStatus::Active,
                 expires_at: Utc::now() + Duration::hours(1),
                 allowed_tool_patterns: vec!["*".to_string()],
+                tenant_id: None,
             })
             .await?;
     }

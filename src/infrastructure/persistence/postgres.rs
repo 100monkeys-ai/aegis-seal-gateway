@@ -52,8 +52,8 @@ impl ApiSpecRepository for PostgresStore {
     async fn save(&self, spec: ApiSpec) -> Result<(), GatewayError> {
         sqlx::query(
             r#"INSERT INTO api_specs
-            (id, name, base_url, source_url, raw_spec, operations, credential_path, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            (id, name, base_url, source_url, raw_spec, operations, credential_path, created_at, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (id) DO UPDATE SET
               name = EXCLUDED.name,
               base_url = EXCLUDED.base_url,
@@ -61,7 +61,8 @@ impl ApiSpecRepository for PostgresStore {
               raw_spec = EXCLUDED.raw_spec,
               operations = EXCLUDED.operations,
               credential_path = EXCLUDED.credential_path,
-              created_at = EXCLUDED.created_at"#,
+              created_at = EXCLUDED.created_at,
+              tenant_id = EXCLUDED.tenant_id"#,
         )
         .bind(spec.id.0.to_string())
         .bind(spec.name)
@@ -71,6 +72,7 @@ impl ApiSpecRepository for PostgresStore {
         .bind(serde_json::to_string(&spec.operations)?)
         .bind(serde_json::to_string(&spec.credential_path)?)
         .bind(spec.created_at.to_rfc3339())
+        .bind(spec.tenant_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -78,7 +80,7 @@ impl ApiSpecRepository for PostgresStore {
 
     async fn find_by_id(&self, id: ApiSpecId) -> Result<Option<ApiSpec>, GatewayError> {
         let row = sqlx::query(
-            "SELECT id,name,base_url,source_url,raw_spec,operations,credential_path,created_at FROM api_specs WHERE id=$1",
+            "SELECT id,name,base_url,source_url,raw_spec,operations,credential_path,created_at,tenant_id FROM api_specs WHERE id=$1",
         )
         .bind(id.0.to_string())
         .fetch_optional(&self.pool)
@@ -88,7 +90,7 @@ impl ApiSpecRepository for PostgresStore {
 
     async fn find_by_source_url(&self, url: &str) -> Result<Option<ApiSpec>, GatewayError> {
         let row = sqlx::query(
-            "SELECT id,name,base_url,source_url,raw_spec,operations,credential_path,created_at FROM api_specs WHERE source_url=$1",
+            "SELECT id,name,base_url,source_url,raw_spec,operations,credential_path,created_at,tenant_id FROM api_specs WHERE source_url=$1",
         )
         .bind(url)
         .fetch_optional(&self.pool)
@@ -96,10 +98,24 @@ impl ApiSpecRepository for PostgresStore {
         row.map(api_spec_from_row).transpose()
     }
 
-    async fn list_all(&self) -> Result<Vec<ApiSpecSummary>, GatewayError> {
-        let rows = sqlx::query("SELECT id,name,source_url FROM api_specs ORDER BY name")
+    async fn list_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<ApiSpecSummary>, GatewayError> {
+        let rows = if let Some(tid) = tenant_id {
+            sqlx::query(
+                "SELECT id,name,source_url FROM api_specs WHERE tenant_id=$1 OR tenant_id IS NULL ORDER BY name",
+            )
+            .bind(tid)
             .fetch_all(&self.pool)
-            .await?;
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT id,name,source_url FROM api_specs WHERE tenant_id IS NULL ORDER BY name",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
         rows.into_iter()
             .map(|row| {
                 Ok(ApiSpecSummary {
@@ -143,6 +159,7 @@ fn api_spec_from_row(row: sqlx::postgres::PgRow) -> Result<ApiSpec, GatewayError
         created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map_err(|e| GatewayError::Serialization(e.to_string()))?
             .with_timezone(&Utc),
+        tenant_id: row.try_get("tenant_id")?,
     })
 }
 
@@ -151,15 +168,16 @@ impl ToolWorkflowRepository for PostgresStore {
     async fn save(&self, workflow: ToolWorkflow) -> Result<(), GatewayError> {
         sqlx::query(
             r#"INSERT INTO workflows
-            (id, name, description, input_schema, api_spec_id, steps, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (id, name, description, input_schema, api_spec_id, steps, created_at, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (id) DO UPDATE SET
               name = EXCLUDED.name,
               description = EXCLUDED.description,
               input_schema = EXCLUDED.input_schema,
               api_spec_id = EXCLUDED.api_spec_id,
               steps = EXCLUDED.steps,
-              created_at = EXCLUDED.created_at"#,
+              created_at = EXCLUDED.created_at,
+              tenant_id = EXCLUDED.tenant_id"#,
         )
         .bind(workflow.id.0.to_string())
         .bind(workflow.name)
@@ -168,6 +186,7 @@ impl ToolWorkflowRepository for PostgresStore {
         .bind(workflow.api_spec_id.0.to_string())
         .bind(serde_json::to_string(&workflow.steps)?)
         .bind(workflow.created_at.to_rfc3339())
+        .bind(workflow.tenant_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -175,7 +194,7 @@ impl ToolWorkflowRepository for PostgresStore {
 
     async fn find_by_id(&self, id: WorkflowId) -> Result<Option<ToolWorkflow>, GatewayError> {
         let row = sqlx::query(
-            "SELECT id,name,description,input_schema,api_spec_id,steps,created_at FROM workflows WHERE id=$1",
+            "SELECT id,name,description,input_schema,api_spec_id,steps,created_at,tenant_id FROM workflows WHERE id=$1",
         )
         .bind(id.0.to_string())
         .fetch_optional(&self.pool)
@@ -185,7 +204,7 @@ impl ToolWorkflowRepository for PostgresStore {
 
     async fn find_by_name(&self, name: &str) -> Result<Option<ToolWorkflow>, GatewayError> {
         let row = sqlx::query(
-            "SELECT id,name,description,input_schema,api_spec_id,steps,created_at FROM workflows WHERE name=$1",
+            "SELECT id,name,description,input_schema,api_spec_id,steps,created_at,tenant_id FROM workflows WHERE name=$1",
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -193,11 +212,24 @@ impl ToolWorkflowRepository for PostgresStore {
         row.map(workflow_from_row).transpose()
     }
 
-    async fn list_all(&self) -> Result<Vec<ToolWorkflowSummary>, GatewayError> {
-        let rows =
-            sqlx::query("SELECT id,name,description,input_schema FROM workflows ORDER BY name")
-                .fetch_all(&self.pool)
-                .await?;
+    async fn list_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<ToolWorkflowSummary>, GatewayError> {
+        let rows = if let Some(tid) = tenant_id {
+            sqlx::query(
+                "SELECT id,name,description,input_schema FROM workflows WHERE tenant_id=$1 OR tenant_id IS NULL ORDER BY name",
+            )
+            .bind(tid)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT id,name,description,input_schema FROM workflows WHERE tenant_id IS NULL ORDER BY name",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
         rows.into_iter()
             .map(|row| {
                 Ok(ToolWorkflowSummary {
@@ -244,6 +276,7 @@ fn workflow_from_row(row: sqlx::postgres::PgRow) -> Result<ToolWorkflow, Gateway
         created_at: chrono::DateTime::parse_from_rfc3339(&created_at_str)
             .map_err(|e| GatewayError::Serialization(e.to_string()))?
             .with_timezone(&Utc),
+        tenant_id: row.try_get("tenant_id")?,
     })
 }
 
@@ -253,15 +286,16 @@ impl EphemeralCliToolRepository for PostgresStore {
         tool.validate()?;
         sqlx::query(
             r#"INSERT INTO cli_tools
-            (name, description, docker_image, allowed_subcommands, require_semantic_judge, default_timeout_seconds, registry_credential_path)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (name, description, docker_image, allowed_subcommands, require_semantic_judge, default_timeout_seconds, registry_credential_path, tenant_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (name) DO UPDATE SET
               description = EXCLUDED.description,
               docker_image = EXCLUDED.docker_image,
               allowed_subcommands = EXCLUDED.allowed_subcommands,
               require_semantic_judge = EXCLUDED.require_semantic_judge,
               default_timeout_seconds = EXCLUDED.default_timeout_seconds,
-              registry_credential_path = EXCLUDED.registry_credential_path"#,
+              registry_credential_path = EXCLUDED.registry_credential_path,
+              tenant_id = EXCLUDED.tenant_id"#,
         )
         .bind(tool.name)
         .bind(tool.description)
@@ -274,6 +308,7 @@ impl EphemeralCliToolRepository for PostgresStore {
                 .map(|value| serde_json::to_string(&value))
                 .transpose()?,
         )
+        .bind(tool.tenant_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -281,7 +316,7 @@ impl EphemeralCliToolRepository for PostgresStore {
 
     async fn find_by_name(&self, name: &str) -> Result<Option<EphemeralCliTool>, GatewayError> {
         let row = sqlx::query(
-            "SELECT name,description,docker_image,allowed_subcommands,require_semantic_judge,default_timeout_seconds,registry_credential_path FROM cli_tools WHERE name=$1",
+            "SELECT name,description,docker_image,allowed_subcommands,require_semantic_judge,default_timeout_seconds,registry_credential_path,tenant_id FROM cli_tools WHERE name=$1",
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -289,12 +324,24 @@ impl EphemeralCliToolRepository for PostgresStore {
         row.map(cli_tool_from_row).transpose()
     }
 
-    async fn list_all(&self) -> Result<Vec<EphemeralCliToolSummary>, GatewayError> {
-        let rows = sqlx::query(
-            "SELECT name,description,docker_image,allowed_subcommands,require_semantic_judge FROM cli_tools ORDER BY name",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+    async fn list_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<EphemeralCliToolSummary>, GatewayError> {
+        let rows = if let Some(tid) = tenant_id {
+            sqlx::query(
+                "SELECT name,description,docker_image,allowed_subcommands,require_semantic_judge FROM cli_tools WHERE tenant_id=$1 OR tenant_id IS NULL ORDER BY name",
+            )
+            .bind(tid)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT name,description,docker_image,allowed_subcommands,require_semantic_judge FROM cli_tools WHERE tenant_id IS NULL ORDER BY name",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
         rows.into_iter()
             .map(|row| {
                 Ok(EphemeralCliToolSummary {
@@ -333,6 +380,7 @@ fn cli_tool_from_row(row: sqlx::postgres::PgRow) -> Result<EphemeralCliTool, Gat
         registry_credential_path: registry_path
             .map(|value| serde_json::from_str(&value))
             .transpose()?,
+        tenant_id: row.try_get("tenant_id")?,
     })
 }
 
@@ -340,8 +388,8 @@ fn cli_tool_from_row(row: sqlx::postgres::PgRow) -> Result<EphemeralCliTool, Gat
 impl SealSessionRepository for PostgresStore {
     async fn save(&self, session: SealSessionRecord) -> Result<(), GatewayError> {
         sqlx::query(
-            r#"INSERT INTO seal_sessions(execution_id, agent_id, security_context, public_key_b64, security_token, session_status, expires_at, allowed_tool_patterns)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            r#"INSERT INTO seal_sessions(execution_id, agent_id, security_context, public_key_b64, security_token, session_status, expires_at, allowed_tool_patterns, tenant_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                ON CONFLICT (execution_id) DO UPDATE SET
                  agent_id = EXCLUDED.agent_id,
                  security_context = EXCLUDED.security_context,
@@ -349,7 +397,8 @@ impl SealSessionRepository for PostgresStore {
                  security_token = EXCLUDED.security_token,
                  session_status = EXCLUDED.session_status,
                  expires_at = EXCLUDED.expires_at,
-                 allowed_tool_patterns = EXCLUDED.allowed_tool_patterns"#,
+                 allowed_tool_patterns = EXCLUDED.allowed_tool_patterns,
+                 tenant_id = EXCLUDED.tenant_id"#,
         )
         .bind(session.execution_id)
         .bind(session.agent_id)
@@ -359,6 +408,7 @@ impl SealSessionRepository for PostgresStore {
         .bind(serde_json::to_string(&session.session_status)?)
         .bind(session.expires_at.to_rfc3339())
         .bind(serde_json::to_string(&session.allowed_tool_patterns)?)
+        .bind(session.tenant_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -369,7 +419,7 @@ impl SealSessionRepository for PostgresStore {
         execution_id: &str,
     ) -> Result<Option<SealSessionRecord>, GatewayError> {
         let row = sqlx::query(
-            "SELECT execution_id,agent_id,security_context,public_key_b64,security_token,session_status,expires_at,allowed_tool_patterns FROM seal_sessions WHERE execution_id=$1",
+            "SELECT execution_id,agent_id,security_context,public_key_b64,security_token,session_status,expires_at,allowed_tool_patterns,tenant_id FROM seal_sessions WHERE execution_id=$1",
         )
         .bind(execution_id)
         .fetch_optional(&self.pool)
@@ -378,12 +428,24 @@ impl SealSessionRepository for PostgresStore {
         row.map(seal_session_from_pg_row).transpose()
     }
 
-    async fn list_active(&self) -> Result<Vec<SealSessionRecord>, GatewayError> {
-        let rows = sqlx::query(
-            "SELECT execution_id,agent_id,security_context,public_key_b64,security_token,session_status,expires_at,allowed_tool_patterns FROM seal_sessions WHERE session_status='\"Active\"'",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+    async fn list_active_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<SealSessionRecord>, GatewayError> {
+        let rows = if let Some(tid) = tenant_id {
+            sqlx::query(
+                "SELECT execution_id,agent_id,security_context,public_key_b64,security_token,session_status,expires_at,allowed_tool_patterns,tenant_id FROM seal_sessions WHERE session_status='\"Active\"' AND (tenant_id=$1 OR tenant_id IS NULL)",
+            )
+            .bind(tid)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT execution_id,agent_id,security_context,public_key_b64,security_token,session_status,expires_at,allowed_tool_patterns,tenant_id FROM seal_sessions WHERE session_status='\"Active\"'",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
         rows.into_iter().map(seal_session_from_pg_row).collect()
     }
 
@@ -416,6 +478,7 @@ fn seal_session_from_pg_row(
         allowed_tool_patterns: serde_json::from_str(
             &record.try_get::<String, _>("allowed_tool_patterns")?,
         )?,
+        tenant_id: record.try_get("tenant_id")?,
     })
 }
 
@@ -423,17 +486,19 @@ fn seal_session_from_pg_row(
 impl SecurityContextRepository for PostgresStore {
     async fn save(&self, context: SecurityContext) -> Result<(), GatewayError> {
         sqlx::query(
-            r#"INSERT INTO security_contexts(name, capabilities, deny_list, description)
-               VALUES ($1, $2, $3, $4)
+            r#"INSERT INTO security_contexts(name, capabilities, deny_list, description, tenant_id)
+               VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (name) DO UPDATE SET
                  capabilities = EXCLUDED.capabilities,
                  deny_list = EXCLUDED.deny_list,
-                 description = EXCLUDED.description"#,
+                 description = EXCLUDED.description,
+                 tenant_id = EXCLUDED.tenant_id"#,
         )
         .bind(context.name)
         .bind(serde_json::to_string(&context.capabilities)?)
         .bind(serde_json::to_string(&context.deny_list)?)
         .bind(context.description)
+        .bind(context.tenant_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -441,7 +506,7 @@ impl SecurityContextRepository for PostgresStore {
 
     async fn find_by_name(&self, name: &str) -> Result<Option<SecurityContext>, GatewayError> {
         let row = sqlx::query(
-            "SELECT name, capabilities, deny_list, description FROM security_contexts WHERE name = $1",
+            "SELECT name, capabilities, deny_list, description, tenant_id FROM security_contexts WHERE name = $1",
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -452,18 +517,30 @@ impl SecurityContextRepository for PostgresStore {
                 capabilities: serde_json::from_str(&r.try_get::<String, _>("capabilities")?)?,
                 deny_list: serde_json::from_str(&r.try_get::<String, _>("deny_list")?)?,
                 description: r.try_get("description")?,
-                tenant_id: None,
+                tenant_id: r.try_get("tenant_id")?,
             })
         })
         .transpose()
     }
 
-    async fn list_all(&self) -> Result<Vec<SecurityContext>, GatewayError> {
-        let rows = sqlx::query(
-            "SELECT name, capabilities, deny_list, description FROM security_contexts ORDER BY name",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+    async fn list_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<SecurityContext>, GatewayError> {
+        let rows = if let Some(tid) = tenant_id {
+            sqlx::query(
+                "SELECT name, capabilities, deny_list, description, tenant_id FROM security_contexts WHERE tenant_id=$1 OR tenant_id IS NULL ORDER BY name",
+            )
+            .bind(tid)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT name, capabilities, deny_list, description, tenant_id FROM security_contexts WHERE tenant_id IS NULL ORDER BY name",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
         rows.into_iter()
             .map(|row| {
                 Ok(SecurityContext {
@@ -471,7 +548,7 @@ impl SecurityContextRepository for PostgresStore {
                     capabilities: serde_json::from_str(&row.try_get::<String, _>("capabilities")?)?,
                     deny_list: serde_json::from_str(&row.try_get::<String, _>("deny_list")?)?,
                     description: row.try_get("description")?,
-                    tenant_id: None,
+                    tenant_id: row.try_get("tenant_id")?,
                 })
             })
             .collect()

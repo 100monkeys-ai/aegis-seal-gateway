@@ -168,6 +168,11 @@ impl InvocationService {
                 })
                 .await
         } else {
+            let tenant_id_opt = if call.tenant_id.is_empty() {
+                None
+            } else {
+                Some(call.tenant_id.as_str())
+            };
             self.workflow_engine
                 .invoke_by_name(
                     &call.exec_id,
@@ -175,6 +180,7 @@ impl InvocationService {
                     call.arguments,
                     zaru_user_token,
                     allow_human_delegated,
+                    tenant_id_opt,
                 )
                 .await
         }
@@ -239,6 +245,7 @@ impl InvocationService {
                     args,
                     zaru_user_token,
                     allow_human_delegated,
+                    None,
                 )
                 .await
         }

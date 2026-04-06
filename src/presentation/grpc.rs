@@ -124,7 +124,7 @@ impl proto::tool_workflow_service_server::ToolWorkflowService for GatewayGrpcSer
         let workflows = self
             .state
             .workflows
-            .list_all()
+            .list_for_tenant(None)
             .await
             .map_err(internal)?
             .into_iter()
@@ -318,7 +318,7 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         let workflows = self
             .state
             .workflows
-            .list_all()
+            .list_for_tenant(None)
             .await
             .map_err(internal)?
             .into_iter()
@@ -337,7 +337,7 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         let cli_tools = self
             .state
             .cli_tools
-            .list_all()
+            .list_for_tenant(None)
             .await
             .map_err(internal)?
             .into_iter()

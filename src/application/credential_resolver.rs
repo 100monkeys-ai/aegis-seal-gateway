@@ -50,12 +50,16 @@ impl CredentialResolver {
         &self,
         path: &CredentialResolutionPath,
         zaru_user_token: Option<&str>,
+        tenant_id: Option<&str>,
     ) -> Result<Vec<(String, SensitiveString)>, GatewayError> {
         match path {
             CredentialResolutionPath::SystemJit {
                 openbao_engine_path,
                 role,
-            } => self.resolve_system_jit(openbao_engine_path, role).await,
+            } => {
+                let scoped_path = tenant_scoped_engine_path(openbao_engine_path, tenant_id);
+                self.resolve_system_jit(&scoped_path, role).await
+            }
             CredentialResolutionPath::HumanDelegated { target_service } => {
                 self.resolve_human_delegated(target_service, zaru_user_token)
                     .await
@@ -69,8 +73,9 @@ impl CredentialResolver {
                     self.resolve_human_delegated(target_service, zaru_user_token)
                         .await
                 } else {
-                    self.resolve_system_jit(system_jit_openbao_engine_path, system_jit_role)
-                        .await
+                    let scoped_path =
+                        tenant_scoped_engine_path(system_jit_openbao_engine_path, tenant_id);
+                    self.resolve_system_jit(&scoped_path, system_jit_role).await
                 }
             }
             CredentialResolutionPath::StaticRef(reference) => {
@@ -166,6 +171,7 @@ impl CredentialResolver {
         path: &CredentialResolutionPath,
         zaru_user_token: Option<&str>,
         allow_human_delegated_credentials: bool,
+        tenant_id: Option<&str>,
     ) -> Result<RegistryCredentials, GatewayError> {
         match path {
             CredentialResolutionPath::StaticRef(reference) => {
@@ -176,7 +182,8 @@ impl CredentialResolver {
                 openbao_engine_path,
                 role,
             } => {
-                self.resolve_registry_credentials_from_system_jit(openbao_engine_path, role)
+                let scoped_path = tenant_scoped_engine_path(openbao_engine_path, tenant_id);
+                self.resolve_registry_credentials_from_system_jit(&scoped_path, role)
                     .await
             }
             CredentialResolutionPath::HumanDelegated { target_service } => {
@@ -240,11 +247,10 @@ impl CredentialResolver {
                         password: SensitiveString::new(token_value),
                     })
                 } else {
-                    self.resolve_registry_credentials_from_system_jit(
-                        system_jit_openbao_engine_path,
-                        system_jit_role,
-                    )
-                    .await
+                    let scoped_path =
+                        tenant_scoped_engine_path(system_jit_openbao_engine_path, tenant_id);
+                    self.resolve_registry_credentials_from_system_jit(&scoped_path, system_jit_role)
+                        .await
                 }
             }
         }
@@ -469,5 +475,19 @@ impl CredentialResolver {
             "Authorization".to_string(),
             SensitiveString::new(format!("Bearer {}", payload.access_token)),
         )])
+    }
+}
+
+/// Prefix an OpenBao engine path with `tenant-{slug}/` when a tenant slug is provided.
+///
+/// For example, `aws/creds/my-role` under tenant `acme` becomes
+/// `tenant-acme/aws/creds/my-role`. System-level calls (tenant_id = None)
+/// use the engine path as-is.
+fn tenant_scoped_engine_path(engine_path: &str, tenant_id: Option<&str>) -> String {
+    match tenant_id {
+        Some(slug) if !slug.trim().is_empty() => {
+            format!("tenant-{}/{}", slug.trim(), engine_path.trim_matches('/'))
+        }
+        _ => engine_path.to_string(),
     }
 }

@@ -14,7 +14,12 @@ pub trait ToolWorkflowRepository: Send + Sync {
     async fn save(&self, workflow: ToolWorkflow) -> Result<(), GatewayError>;
     async fn find_by_id(&self, id: WorkflowId) -> Result<Option<ToolWorkflow>, GatewayError>;
     async fn find_by_name(&self, name: &str) -> Result<Option<ToolWorkflow>, GatewayError>;
-    async fn list_all(&self) -> Result<Vec<ToolWorkflowSummary>, GatewayError>;
+    /// List workflows visible to `tenant_id`: tenant-owned rows plus system-global rows
+    /// (`tenant_id IS NULL`). Pass `None` to return only system-global rows.
+    async fn list_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<ToolWorkflowSummary>, GatewayError>;
     async fn delete(&self, id: WorkflowId) -> Result<(), GatewayError>;
 }
 
@@ -23,7 +28,12 @@ pub trait ApiSpecRepository: Send + Sync {
     async fn save(&self, spec: ApiSpec) -> Result<(), GatewayError>;
     async fn find_by_id(&self, id: ApiSpecId) -> Result<Option<ApiSpec>, GatewayError>;
     async fn find_by_source_url(&self, url: &str) -> Result<Option<ApiSpec>, GatewayError>;
-    async fn list_all(&self) -> Result<Vec<ApiSpecSummary>, GatewayError>;
+    /// List specs visible to `tenant_id`: tenant-owned rows plus system-global rows
+    /// (`tenant_id IS NULL`). Pass `None` to return only system-global rows.
+    async fn list_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<ApiSpecSummary>, GatewayError>;
     async fn delete(&self, id: ApiSpecId) -> Result<(), GatewayError>;
 }
 
@@ -31,7 +41,12 @@ pub trait ApiSpecRepository: Send + Sync {
 pub trait EphemeralCliToolRepository: Send + Sync {
     async fn save(&self, tool: EphemeralCliTool) -> Result<(), GatewayError>;
     async fn find_by_name(&self, name: &str) -> Result<Option<EphemeralCliTool>, GatewayError>;
-    async fn list_all(&self) -> Result<Vec<EphemeralCliToolSummary>, GatewayError>;
+    /// List CLI tools visible to `tenant_id`: tenant-owned rows plus system-global rows
+    /// (`tenant_id IS NULL`). Pass `None` to return only system-global rows.
+    async fn list_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<EphemeralCliToolSummary>, GatewayError>;
     async fn delete(&self, name: &str) -> Result<(), GatewayError>;
 }
 
@@ -42,7 +57,11 @@ pub trait SealSessionRepository: Send + Sync {
         &self,
         execution_id: &str,
     ) -> Result<Option<SealSessionRecord>, GatewayError>;
-    async fn list_active(&self) -> Result<Vec<SealSessionRecord>, GatewayError>;
+    /// List active sessions visible to `tenant_id`. Pass `None` to return all active sessions.
+    async fn list_active_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<SealSessionRecord>, GatewayError>;
     async fn delete_by_execution_id(&self, execution_id: &str) -> Result<bool, GatewayError>;
 }
 
@@ -50,7 +69,12 @@ pub trait SealSessionRepository: Send + Sync {
 pub trait SecurityContextRepository: Send + Sync {
     async fn save(&self, context: SecurityContext) -> Result<(), GatewayError>;
     async fn find_by_name(&self, name: &str) -> Result<Option<SecurityContext>, GatewayError>;
-    async fn list_all(&self) -> Result<Vec<SecurityContext>, GatewayError>;
+    /// List security contexts visible to `tenant_id`: tenant-owned rows plus system-global rows
+    /// (`tenant_id IS NULL`). Pass `None` to return only system-global rows.
+    async fn list_for_tenant(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<SecurityContext>, GatewayError>;
 }
 
 #[async_trait]
@@ -73,6 +97,8 @@ pub struct SealSessionRecord {
     pub session_status: SealSessionStatus,
     pub expires_at: DateTime<Utc>,
     pub allowed_tool_patterns: Vec<String>,
+    /// Tenant slug that owns this session. `None` = system/internal session.
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]

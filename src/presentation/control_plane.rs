@@ -38,6 +38,7 @@ pub struct RegisterSpecRequest {
 
 pub async fn register_spec(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(req): Json<RegisterSpecRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if let Some(source_url) = req.source_url.as_ref() {
@@ -70,7 +71,7 @@ pub async fn register_spec(
     };
 
     let operations = parse_operations(&raw_spec).map_err(error_response)?;
-    let spec = ApiSpec::new(
+    let mut spec = ApiSpec::new(
         req.name,
         req.base_url,
         req.source_url,
@@ -79,6 +80,7 @@ pub async fn register_spec(
         req.credential_path,
     )
     .map_err(error_response)?;
+    spec.tenant_id = tenant.0;
 
     let id = spec.id;
     let name = spec.name.clone();
@@ -113,8 +115,13 @@ pub async fn register_spec(
 )]
 pub async fn list_specs(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let specs = state.specs.list_all().await.map_err(error_response)?;
+    let specs = state
+        .specs
+        .list_for_tenant(tenant.0.as_deref())
+        .await
+        .map_err(error_response)?;
     Ok(Json(json!(specs)))
 }
 
@@ -191,11 +198,12 @@ pub struct RegisterWorkflowRequest {
 )]
 pub async fn register_workflow(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(req): Json<RegisterWorkflowRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let api_spec_id = parse_api_spec_id(&req.api_spec_id).map_err(error_response)?;
     validate_workflow_steps_against_spec(&state, api_spec_id, &req.steps).await?;
-    let workflow = ToolWorkflow::new(
+    let mut workflow = ToolWorkflow::new(
         req.name,
         req.description,
         req.input_schema,
@@ -203,6 +211,7 @@ pub async fn register_workflow(
         req.steps,
     )
     .map_err(error_response)?;
+    workflow.tenant_id = tenant.0;
     let id = workflow.id;
     let step_count = workflow.steps.len();
     let name = workflow.name.clone();
@@ -241,8 +250,13 @@ pub async fn register_workflow(
 )]
 pub async fn list_workflows(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let list = state.workflows.list_all().await.map_err(error_response)?;
+    let list = state
+        .workflows
+        .list_for_tenant(tenant.0.as_deref())
+        .await
+        .map_err(error_response)?;
     Ok(Json(json!(list)))
 }
 
@@ -325,6 +339,7 @@ pub struct RegisterCliToolRequest {
 )]
 pub async fn register_cli_tool(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(req): Json<RegisterCliToolRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let tool = EphemeralCliTool {
@@ -335,6 +350,7 @@ pub async fn register_cli_tool(
         require_semantic_judge: req.require_semantic_judge,
         default_timeout_seconds: req.default_timeout_seconds,
         registry_credential_path: req.registry_credential_path,
+        tenant_id: tenant.0,
     };
     tool.validate().map_err(error_response)?;
     let event_name = tool.name.clone();
@@ -368,8 +384,13 @@ pub async fn register_cli_tool(
 )]
 pub async fn list_cli_tools(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let list = state.cli_tools.list_all().await.map_err(error_response)?;
+    let list = state
+        .cli_tools
+        .list_for_tenant(tenant.0.as_deref())
+        .await
+        .map_err(error_response)?;
     Ok(Json(json!(list)))
 }
 
@@ -408,9 +429,18 @@ pub async fn delete_cli_tool(
 )]
 pub async fn list_tools(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let workflows = state.workflows.list_all().await.map_err(error_response)?;
-    let cli_tools = state.cli_tools.list_all().await.map_err(error_response)?;
+    let workflows = state
+        .workflows
+        .list_for_tenant(tenant.0.as_deref())
+        .await
+        .map_err(error_response)?;
+    let cli_tools = state
+        .cli_tools
+        .list_for_tenant(tenant.0.as_deref())
+        .await
+        .map_err(error_response)?;
 
     let workflow_tools = workflows.into_iter().map(|workflow| {
         json!({
@@ -484,6 +514,7 @@ pub struct UpsertSealSessionRequest {
 )]
 pub async fn upsert_seal_session(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(req): Json<UpsertSealSessionRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     state
@@ -515,6 +546,7 @@ pub async fn upsert_seal_session(
                 .allowed_tool_patterns
                 .filter(|patterns| !patterns.is_empty())
                 .unwrap_or_else(|| vec!["*".to_string()]),
+            tenant_id: tenant.0,
         })
         .await
         .map_err(error_response)?;
@@ -533,10 +565,11 @@ pub async fn upsert_seal_session(
 )]
 pub async fn list_seal_sessions(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let sessions = state
         .seal_sessions
-        .list_active()
+        .list_active_for_tenant(tenant.0.as_deref())
         .await
         .map_err(error_response)?;
     Ok(Json(json!(sessions)))
@@ -659,10 +692,11 @@ pub async fn upsert_security_context(
 )]
 pub async fn list_security_contexts(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let list = state
         .security_contexts
-        .list_all()
+        .list_for_tenant(tenant.0.as_deref())
         .await
         .map_err(error_response)?;
     Ok(Json(json!(list)))

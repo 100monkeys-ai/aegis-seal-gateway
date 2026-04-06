@@ -47,6 +47,7 @@ impl WorkflowEngine {
         input: Value,
         zaru_user_token: Option<&str>,
         allow_human_delegated_credentials: bool,
+        tenant_id: Option<&str>,
     ) -> Result<Value, GatewayError> {
         let workflow = self
             .workflows
@@ -59,6 +60,7 @@ impl WorkflowEngine {
             input,
             zaru_user_token,
             allow_human_delegated_credentials,
+            tenant_id,
         )
         .await
     }
@@ -70,6 +72,7 @@ impl WorkflowEngine {
         input: Value,
         zaru_user_token: Option<&str>,
         allow_human_delegated_credentials: bool,
+        tenant_id: Option<&str>,
     ) -> Result<Value, GatewayError> {
         let started = Instant::now();
         self.event_store
@@ -104,7 +107,7 @@ impl WorkflowEngine {
         let target_service = target_service_from_credential_path(&resolved_credential_path);
         let credential_headers = match self
             .credential_resolver
-            .resolve(&resolved_credential_path, zaru_user_token)
+            .resolve(&resolved_credential_path, zaru_user_token, tenant_id)
             .await
         {
             Ok(headers) => {

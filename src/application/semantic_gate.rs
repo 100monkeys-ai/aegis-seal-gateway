@@ -116,6 +116,7 @@ mod tests {
             require_semantic_judge: false,
             default_timeout_seconds: 60,
             registry_credential_path: None,
+            tenant_id: None,
         };
 
         let verdict = gate

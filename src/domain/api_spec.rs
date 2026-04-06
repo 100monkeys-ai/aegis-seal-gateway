@@ -38,6 +38,8 @@ pub struct ApiSpec {
     pub operations: HashMap<String, OperationSpec>,
     pub credential_path: CredentialResolutionPath,
     pub created_at: DateTime<Utc>,
+    /// Tenant that owns this spec. `None` = system-global (visible to all tenants).
+    pub tenant_id: Option<String>,
 }
 
 impl ApiSpec {
@@ -74,6 +76,7 @@ impl ApiSpec {
             operations,
             credential_path,
             created_at: Utc::now(),
+            tenant_id: None,
         })
     }
 }

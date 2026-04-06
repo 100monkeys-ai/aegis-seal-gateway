@@ -27,6 +27,7 @@ struct JwksResponse {
     keys: Vec<JwkKey>,
 }
 
+#[derive(Debug)]
 struct CachedJwks {
     keys: JwksResponse,
     fetched_at: Instant,

@@ -499,6 +499,7 @@ mod tests {
             operator_jwt_issuer: "issuer".to_string(),
             operator_jwt_audience: "audience".to_string(),
             auth_disabled,
+            operator_role_claim: "aegis_role".to_string(),
             seal_jwt_public_key_pem: String::new(),
             seal_jwt_issuer: "seal-issuer".to_string(),
             seal_jwt_audience: "seal-audience".to_string(),

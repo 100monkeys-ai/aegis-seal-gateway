@@ -96,6 +96,9 @@ pub struct GatewayCliConfig {
     pub container_cli: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic_judge_url: Option<String>,
+    /// Base URL of the aegis-orchestrator REST API.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orchestrator_url: Option<String>,
     #[serde(default = "default_nfs_server_host")]
     pub nfs_server_host: String,
     #[serde(default = "default_nfs_port")]
@@ -176,6 +179,7 @@ impl Default for GatewayCliConfig {
         Self {
             container_cli: None,
             semantic_judge_url: None,
+            orchestrator_url: None,
             nfs_server_host: default_nfs_server_host(),
             nfs_port: default_nfs_port(),
             nfs_mount_port: default_nfs_mount_port(),
@@ -227,6 +231,7 @@ impl SealGatewayConfigManifest {
         resolve_env_option(&mut self.spec.credentials.keycloak_client_secret);
         resolve_env_option(&mut self.spec.cli.container_cli);
         resolve_env_option(&mut self.spec.cli.semantic_judge_url);
+        resolve_env_option(&mut self.spec.cli.orchestrator_url);
         resolve_env_string(&mut self.spec.cli.nfs_server_host);
     }
 
@@ -361,6 +366,11 @@ impl SealGatewayConfigManifest {
         }
         if let Ok(value) = std::env::var("SEAL_GATEWAY_SEMANTIC_JUDGE_URL") {
             self.spec.cli.semantic_judge_url = Some(value);
+        }
+        if let Ok(value) = std::env::var("SEAL_GATEWAY_ORCHESTRATOR_URL") {
+            if !value.trim().is_empty() {
+                self.spec.cli.orchestrator_url = Some(value);
+            }
         }
         if let Ok(value) = std::env::var("SEAL_GATEWAY_NFS_HOST") {
             if !value.trim().is_empty() {

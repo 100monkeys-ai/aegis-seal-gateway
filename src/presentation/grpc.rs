@@ -377,8 +377,23 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
                 }
             });
 
+        let native_tools = crate::application::native_tools::native_tool_catalog()
+            .into_iter()
+            .map(|meta| {
+                let input_schema_json =
+                    serde_json::to_string(&meta.input_schema).unwrap_or_default();
+                proto::ToolSummary {
+                    name: meta.name.to_string(),
+                    description: meta.description.to_string(),
+                    kind: "native".to_string(),
+                    input_schema_json,
+                    tags: vec!["native".to_string(), "volume".to_string()],
+                    category: "internal".to_string(),
+                }
+            });
+
         Ok(Response::new(proto::ListToolsResponse {
-            tools: workflows.chain(cli_tools).collect(),
+            tools: workflows.chain(cli_tools).chain(native_tools).collect(),
         }))
     }
 }
@@ -515,6 +530,7 @@ mod tests {
             nfs_server_host: "127.0.0.1".to_string(),
             nfs_port: 2049,
             nfs_mount_port: 20048,
+            orchestrator_url: None,
         }
     }
 

@@ -3,7 +3,9 @@ use std::sync::Arc;
 use base64::Engine;
 use serde_json::Value;
 
-use crate::application::{CliEngine, CliFsalMount, CliInvocation, WorkflowEngine};
+use crate::application::{
+    CliEngine, CliFsalMount, CliInvocation, NativeToolEngine, WorkflowEngine,
+};
 use crate::domain::SealEnvelope;
 use crate::domain::{
     EphemeralCliToolRepository, JtiRepository, SealSessionRepository, SealSessionStatus,
@@ -18,6 +20,8 @@ use crate::infrastructure::seal::verify_and_extract;
 pub struct InvocationService {
     workflow_engine: WorkflowEngine,
     cli_engine: CliEngine,
+    /// Present only when `orchestrator_url` is configured; enables native tools.
+    native_tool_engine: Option<NativeToolEngine>,
     cli_tools: Arc<dyn EphemeralCliToolRepository>,
     seal_sessions: Arc<dyn SealSessionRepository>,
     security_contexts: Arc<dyn SecurityContextRepository>,
@@ -31,6 +35,7 @@ impl InvocationService {
     pub fn new(
         workflow_engine: WorkflowEngine,
         cli_engine: CliEngine,
+        native_tool_engine: Option<NativeToolEngine>,
         cli_tools: Arc<dyn EphemeralCliToolRepository>,
         seal_sessions: Arc<dyn SealSessionRepository>,
         security_contexts: Arc<dyn SecurityContextRepository>,
@@ -41,6 +46,7 @@ impl InvocationService {
         Self {
             workflow_engine,
             cli_engine,
+            native_tool_engine,
             cli_tools,
             seal_sessions,
             security_contexts,
@@ -150,6 +156,17 @@ impl InvocationService {
 
         let allow_human_delegated = security_context.allows_human_delegated_credentials();
 
+        if crate::application::native_tools::is_native_tool(&call.tool_name) {
+            let engine = self.native_tool_engine.as_ref().ok_or_else(|| {
+                GatewayError::Internal(
+                    "orchestrator_url is not configured; native tools are unavailable".to_string(),
+                )
+            })?;
+            return engine
+                .invoke(&call.tool_name, &call.arguments, &envelope.security_token)
+                .await;
+        }
+
         if self
             .cli_tools
             .find_by_name(&call.tool_name)
@@ -226,6 +243,16 @@ impl InvocationService {
         security_context.evaluate(tool_name, &args)?;
 
         let allow_human_delegated = security_context.allows_human_delegated_credentials();
+
+        if crate::application::native_tools::is_native_tool(tool_name) {
+            let engine = self.native_tool_engine.as_ref().ok_or_else(|| {
+                GatewayError::Internal(
+                    "orchestrator_url is not configured; native tools are unavailable".to_string(),
+                )
+            })?;
+            let bearer = zaru_user_token.unwrap_or("");
+            return engine.invoke(tool_name, &args, bearer).await;
+        }
 
         if self.cli_tools.find_by_name(tool_name).await?.is_some() {
             let command = args

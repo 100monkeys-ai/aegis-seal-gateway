@@ -27,6 +27,9 @@ pub struct GatewayConfig {
     pub nfs_server_host: String,
     pub nfs_port: u16,
     pub nfs_mount_port: u16,
+    /// Base URL of the aegis-orchestrator REST API (e.g. `http://orchestrator:8080`).
+    /// Required for native tools that proxy volume/file operations.
+    pub orchestrator_url: Option<String>,
 }
 
 impl GatewayConfig {
@@ -95,6 +98,11 @@ impl GatewayConfig {
             nfs_server_host: manifest.spec.cli.nfs_server_host,
             nfs_port: manifest.spec.cli.nfs_port,
             nfs_mount_port: manifest.spec.cli.nfs_mount_port,
+            orchestrator_url: manifest
+                .spec
+                .cli
+                .orchestrator_url
+                .filter(|value| !value.trim().is_empty()),
         })
     }
 

@@ -14,7 +14,8 @@ use axum::{
 use tracing_subscriber::EnvFilter;
 
 use application::{
-    CliEngine, CredentialResolver, ExplorerService, InvocationService, SemanticGate, WorkflowEngine,
+    CliEngine, CredentialResolver, ExplorerService, InvocationService, NativeToolEngine,
+    SemanticGate, WorkflowEngine,
 };
 use domain::{
     ApiSpecRepository, EphemeralCliToolRepository, JtiRepository, SealSessionRecord,
@@ -135,6 +136,10 @@ async fn main() -> anyhow::Result<()> {
         event_store.clone(),
         config.clone(),
     );
+    let native_tool_engine = config
+        .orchestrator_url
+        .as_deref()
+        .map(|url| NativeToolEngine::new(http_client.clone(), url.to_string()));
     let explorer = ExplorerService::new(
         specs.clone(),
         http_client,
@@ -144,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
     let invocation = InvocationService::new(
         workflow_engine,
         cli_engine,
+        native_tool_engine,
         cli_tools.clone(),
         seal_sessions.clone(),
         security_contexts.clone(),

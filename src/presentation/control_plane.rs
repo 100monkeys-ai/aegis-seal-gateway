@@ -481,9 +481,23 @@ pub async fn list_tools(
         })
     });
 
+    let native_tool_entries = crate::application::native_tools::native_tool_catalog()
+        .into_iter()
+        .map(|meta| {
+            json!({
+                "name": meta.name,
+                "description": meta.description,
+                "kind": "native",
+                "input_schema": meta.input_schema,
+                "tags": ["native", "volume"],
+                "category": "internal",
+            })
+        });
+
     let all = workflow_tools
         .into_iter()
         .chain(cli_tool_entries)
+        .chain(native_tool_entries)
         .collect::<Vec<_>>();
     Ok(Json(json!(all)))
 }

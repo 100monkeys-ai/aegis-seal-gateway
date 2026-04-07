@@ -280,6 +280,7 @@ fn credential_path_label(path: &CredentialResolutionPath) -> &'static str {
         CredentialResolutionPath::HumanDelegated { .. } => "human_delegated",
         CredentialResolutionPath::Auto { .. } => "auto",
         CredentialResolutionPath::StaticRef(_) => "static_ref",
+        CredentialResolutionPath::UserBound { .. } => "user_bound",
     }
 }
 
@@ -469,6 +470,7 @@ mod tests {
             nfs_server_host: "127.0.0.1".to_string(),
             nfs_port: 2049,
             nfs_mount_port: 20048,
+            orchestrator_url: None,
         }
     }
 
@@ -492,7 +494,7 @@ mod tests {
 
         let engine = CliEngine::new(
             repo,
-            CredentialResolver::new(test_config()),
+            CredentialResolver::new(test_config(), None),
             SemanticGate::new(None),
             Arc::new(NoopEventStore),
             test_config(),

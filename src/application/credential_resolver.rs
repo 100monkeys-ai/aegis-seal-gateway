@@ -500,7 +500,7 @@ impl CredentialResolver {
             r#"
             SELECT cb.secret_path
               FROM credential_bindings cb
-              JOIN credential_grants cg ON cg.credential_binding_id = cb.id
+              JOIN credential_grants cg ON cg.binding_id = cb.id
              WHERE cb.owner_user_id = $1
                AND cb.provider      = $2
                AND cb.status        = 'active'

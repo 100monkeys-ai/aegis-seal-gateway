@@ -43,6 +43,7 @@ pub struct CliFsalMount {
     pub volume_id: String,
     pub mount_path: String,
     pub read_only: bool,
+    pub remote_path: String,
 }
 
 impl CliEngine {
@@ -190,14 +191,13 @@ impl CliEngine {
             );
             let readonly_suffix = if mount.read_only { ",ro" } else { "" };
             cmd.arg("--mount").arg(format!(
-                "type=volume,src={volume_source},dst={},volume-driver=local,volume-opt=type=nfs,volume-opt=o=addr={},nfsvers=3,proto=tcp,port={},mountport={},soft,timeo=10,nolock{},volume-opt=device=:/{}/{}",
+                "type=volume,src={volume_source},dst={},volume-driver=local,volume-opt=type=nfs,volume-opt=o=addr={},nfsvers=3,proto=tcp,port={},mountport={},soft,timeo=10,nolock{},volume-opt=device=:{}",
                 mount.mount_path,
                 self.nfs_server_host,
                 self.nfs_port,
                 self.nfs_mount_port,
                 readonly_suffix,
-                invocation.execution_id,
-                mount.volume_id
+                mount.remote_path
             ));
         }
         cmd.arg("-w").arg("/workspace");
@@ -511,6 +511,7 @@ mod tests {
                     volume_id: "vol-1".to_string(),
                     mount_path: "/workspace".to_string(),
                     read_only: false,
+                    remote_path: "/exec-1/vol-1".to_string(),
                 }],
                 tenant_id: None,
                 zaru_user_token: Some("user-token".to_string()),

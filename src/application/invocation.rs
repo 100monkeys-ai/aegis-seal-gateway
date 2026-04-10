@@ -356,10 +356,17 @@ fn parse_fsal_mounts(args: &Value) -> Result<Vec<CliFsalMount>, GatewayError> {
                 .get("read_only")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let remote_path = entry
+                .get("remote_path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    GatewayError::Validation("fsal_mounts[].remote_path is required".to_string())
+                })?;
             Ok(CliFsalMount {
                 volume_id: volume_id.to_string(),
                 mount_path: mount_path.to_string(),
                 read_only,
+                remote_path: remote_path.to_string(),
             })
         })
         .collect::<Result<Vec<CliFsalMount>, GatewayError>>()?;

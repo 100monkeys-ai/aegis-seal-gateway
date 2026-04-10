@@ -77,3 +77,31 @@ jobs:
       - name: Run tests
         working-directory: aegis-seal-gateway
         run: cargo test --locked
+
+  package:
+    name: Package verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: aegis-seal-gateway
+      - uses: actions/checkout@v6
+        with:
+          repository: 100monkeys-ai/aegis-proto
+          path: aegis-proto
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry & build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: aegis-seal-gateway -> target
+      - name: Prepare proto files for packaging
+        working-directory: aegis-seal-gateway
+        run: |
+          mkdir -p proto-vendor/aegis
+          if [ ! -f proto-vendor/aegis/seal_gateway.proto ]; then
+            cp ../aegis-proto/proto/seal_gateway.proto proto-vendor/aegis/seal_gateway.proto
+          fi
+      - name: Verify package includes all required files
+        working-directory: aegis-seal-gateway
+        run: cargo package --no-verify --locked

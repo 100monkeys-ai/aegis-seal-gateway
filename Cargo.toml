@@ -10,6 +10,7 @@ description = "Standalone SEAL tooling gateway for workflow macro-tools, API exp
 readme = "README.md"
 include = [
     "src/**",
+    "migrations/**",
     "README.md",
     "LICENSE",
     "build.rs",

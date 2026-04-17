@@ -145,6 +145,164 @@ pub fn native_tool_catalog() -> Vec<NativeToolMeta> {
                 }
             }),
         },
+        NativeToolMeta {
+            name: "aegis.git.clone",
+            description: "Create a git repo binding and trigger asynchronous clone into a workspace volume. Returns the binding immediately in `Pending`/`Cloning` status.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["repo_url", "label"],
+                "properties": {
+                    "repo_url": {
+                        "type": "string",
+                        "description": "Repository URL (https://... or git@...)"
+                    },
+                    "credential_binding_id": {
+                        "type": "string",
+                        "description": "Optional UUID of a credential binding (SshKey or ApiKey) for private repos"
+                    },
+                    "git_ref": {
+                        "type": "object",
+                        "description": "Git ref to check out. Defaults to {kind:branch, value:main}.",
+                        "required": ["kind", "value"],
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": ["branch", "tag", "commit"]
+                            },
+                            "value": { "type": "string" }
+                        }
+                    },
+                    "sparse_paths": {
+                        "type": "array",
+                        "description": "Optional list of sparse checkout paths",
+                        "items": { "type": "string" }
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "Human-readable binding name; mounted at /workspace/{label}"
+                    },
+                    "auto_refresh": {
+                        "type": "boolean",
+                        "description": "Enable webhook-driven auto-refresh (default false)"
+                    },
+                    "shallow": {
+                        "type": "boolean",
+                        "description": "Perform a shallow clone (default true)"
+                    }
+                }
+            }),
+        },
+        NativeToolMeta {
+            name: "aegis.git.list",
+            description: "List the caller's git repo bindings.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "page": { "type": "integer" },
+                    "limit": { "type": "integer" }
+                }
+            }),
+        },
+        NativeToolMeta {
+            name: "aegis.git.status",
+            description: "Get clone/refresh status for a git repo binding. Returns the binding with current status, last commit SHA, last_cloned_at.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["binding_id"],
+                "properties": {
+                    "binding_id": {
+                        "type": "string",
+                        "description": "UUID of the git repo binding"
+                    }
+                }
+            }),
+        },
+        NativeToolMeta {
+            name: "aegis.git.refresh",
+            description: "Trigger a fetch + checkout to update the bound volume to the latest remote HEAD (for Branch refs) or re-verify (for Tag/Commit refs).",
+            input_schema: json!({
+                "type": "object",
+                "required": ["binding_id"],
+                "properties": {
+                    "binding_id": {
+                        "type": "string",
+                        "description": "UUID of the git repo binding"
+                    }
+                }
+            }),
+        },
+        NativeToolMeta {
+            name: "aegis.git.delete",
+            description: "Delete a git repo binding and cascade-delete the associated volume.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["binding_id"],
+                "properties": {
+                    "binding_id": {
+                        "type": "string",
+                        "description": "UUID of the git repo binding"
+                    }
+                }
+            }),
+        },
+        NativeToolMeta {
+            name: "aegis.git.commit",
+            description: "Stage all changes in the bound volume and commit with the given message. Returns the new commit SHA. Fails if there are no changes to commit.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["binding_id", "message"],
+                "properties": {
+                    "binding_id": {
+                        "type": "string",
+                        "description": "UUID of the git repo binding"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Commit message"
+                    }
+                }
+            }),
+        },
+        NativeToolMeta {
+            name: "aegis.git.push",
+            description: "Push committed changes to the remote. Requires a credential_binding_id set on the binding for authenticated remotes.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["binding_id"],
+                "properties": {
+                    "binding_id": {
+                        "type": "string",
+                        "description": "UUID of the git repo binding"
+                    },
+                    "remote": {
+                        "type": "string",
+                        "description": "Remote name (default 'origin')"
+                    },
+                    "ref": {
+                        "type": "string",
+                        "description": "Ref to push (defaults to current branch)"
+                    }
+                }
+            }),
+        },
+        NativeToolMeta {
+            name: "aegis.git.diff",
+            description: "Return the unified diff of the bound volume's working tree (or index, if staged=true). Read-only.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["binding_id"],
+                "properties": {
+                    "binding_id": {
+                        "type": "string",
+                        "description": "UUID of the git repo binding"
+                    },
+                    "staged": {
+                        "type": "boolean",
+                        "description": "If true, return the diff of the index against HEAD (default false)"
+                    }
+                }
+            }),
+        },
     ]
 }
 
@@ -300,6 +458,136 @@ impl NativeToolEngine {
                 wrap_response(status, response)
             }
 
+            "aegis.git.clone" => {
+                // Forward the input JSON as-is to the orchestrator. The
+                // orchestrator validates required fields and defaults optional
+                // ones (git_ref → main, auto_refresh → false, shallow → true).
+                let body = args.clone();
+                let (status, response) = self
+                    .http_client
+                    .execute(
+                        "POST",
+                        &format!("{base}/v1/storage/git"),
+                        &headers,
+                        Some(body),
+                    )
+                    .await?;
+                wrap_response(status, response)
+            }
+
+            "aegis.git.list" => {
+                let mut query_parts: Vec<String> = Vec::new();
+                if let Some(page) = args.get("page").and_then(|v| v.as_i64()) {
+                    query_parts.push(format!("page={page}"));
+                }
+                if let Some(limit) = args.get("limit").and_then(|v| v.as_i64()) {
+                    query_parts.push(format!("limit={limit}"));
+                }
+                let url = if query_parts.is_empty() {
+                    format!("{base}/v1/storage/git")
+                } else {
+                    format!("{base}/v1/storage/git?{}", query_parts.join("&"))
+                };
+                let (status, response) = self
+                    .http_client
+                    .execute("GET", &url, &headers, None)
+                    .await?;
+                wrap_response(status, response)
+            }
+
+            "aegis.git.status" => {
+                let binding_id = require_str(args, "binding_id")?;
+                let (status, response) = self
+                    .http_client
+                    .execute(
+                        "GET",
+                        &format!("{base}/v1/storage/git/{binding_id}"),
+                        &headers,
+                        None,
+                    )
+                    .await?;
+                wrap_response(status, response)
+            }
+
+            "aegis.git.refresh" => {
+                let binding_id = require_str(args, "binding_id")?;
+                let (status, response) = self
+                    .http_client
+                    .execute(
+                        "POST",
+                        &format!("{base}/v1/storage/git/{binding_id}/refresh"),
+                        &headers,
+                        None,
+                    )
+                    .await?;
+                wrap_response(status, response)
+            }
+
+            "aegis.git.delete" => {
+                let binding_id = require_str(args, "binding_id")?;
+                let (status, response) = self
+                    .http_client
+                    .execute(
+                        "DELETE",
+                        &format!("{base}/v1/storage/git/{binding_id}"),
+                        &headers,
+                        None,
+                    )
+                    .await?;
+                wrap_response(status, response)
+            }
+
+            "aegis.git.commit" => {
+                let binding_id = require_str(args, "binding_id")?;
+                let message = require_str(args, "message")?;
+                let body = json!({ "message": message });
+                let (status, response) = self
+                    .http_client
+                    .execute(
+                        "POST",
+                        &format!("{base}/v1/storage/git/{binding_id}/commit"),
+                        &headers,
+                        Some(body),
+                    )
+                    .await?;
+                wrap_response(status, response)
+            }
+
+            "aegis.git.push" => {
+                let binding_id = require_str(args, "binding_id")?;
+                let mut body = serde_json::Map::new();
+                if let Some(remote) = args.get("remote").and_then(|v| v.as_str()) {
+                    body.insert("remote".to_string(), Value::String(remote.to_string()));
+                }
+                if let Some(ref_val) = args.get("ref").and_then(|v| v.as_str()) {
+                    body.insert("ref".to_string(), Value::String(ref_val.to_string()));
+                }
+                let (status, response) = self
+                    .http_client
+                    .execute(
+                        "POST",
+                        &format!("{base}/v1/storage/git/{binding_id}/push"),
+                        &headers,
+                        Some(Value::Object(body)),
+                    )
+                    .await?;
+                wrap_response(status, response)
+            }
+
+            "aegis.git.diff" => {
+                let binding_id = require_str(args, "binding_id")?;
+                let staged = args
+                    .get("staged")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let url = format!("{base}/v1/storage/git/{binding_id}/diff?staged={staged}");
+                let (status, response) = self
+                    .http_client
+                    .execute("GET", &url, &headers, None)
+                    .await?;
+                wrap_response(status, response)
+            }
+
             other => Err(GatewayError::NotFound(format!(
                 "native tool '{other}' not found"
             ))),
@@ -375,8 +663,156 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_contains_nine_tools() {
-        assert_eq!(native_tool_catalog().len(), 9);
+    fn catalog_contains_all_native_tools() {
+        // 9 volume/file tools + 8 git tools = 17
+        assert_eq!(native_tool_catalog().len(), 17);
+    }
+
+    #[test]
+    fn catalog_contains_all_git_tools() {
+        let names: Vec<&str> = native_tool_catalog().iter().map(|m| m.name).collect();
+        for expected in [
+            "aegis.git.clone",
+            "aegis.git.list",
+            "aegis.git.status",
+            "aegis.git.refresh",
+            "aegis.git.delete",
+            "aegis.git.commit",
+            "aegis.git.push",
+            "aegis.git.diff",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "catalog missing git tool '{expected}'"
+            );
+        }
+    }
+
+    #[test]
+    fn git_clone_schema_requires_repo_url_and_label() {
+        let meta = native_tool_catalog()
+            .into_iter()
+            .find(|m| m.name == "aegis.git.clone")
+            .expect("aegis.git.clone must be registered");
+        let required = meta
+            .input_schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("aegis.git.clone schema must declare required fields");
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(required_names.contains(&"repo_url"));
+        assert!(required_names.contains(&"label"));
+    }
+
+    #[test]
+    fn git_commit_schema_requires_binding_id_and_message() {
+        let meta = native_tool_catalog()
+            .into_iter()
+            .find(|m| m.name == "aegis.git.commit")
+            .expect("aegis.git.commit must be registered");
+        let required = meta
+            .input_schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("aegis.git.commit schema must declare required fields");
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(required_names.contains(&"binding_id"));
+        assert!(required_names.contains(&"message"));
+    }
+
+    #[test]
+    fn git_status_schema_requires_binding_id_only() {
+        for name in ["aegis.git.status", "aegis.git.refresh", "aegis.git.delete"] {
+            let meta = native_tool_catalog()
+                .into_iter()
+                .find(|m| m.name == name)
+                .unwrap_or_else(|| panic!("{name} must be registered"));
+            let required = meta
+                .input_schema
+                .get("required")
+                .and_then(|v| v.as_array())
+                .unwrap_or_else(|| panic!("{name} schema must declare required fields"));
+            let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+            assert_eq!(required_names, vec!["binding_id"], "{name} required");
+        }
+    }
+
+    #[test]
+    fn git_list_schema_has_no_required_fields() {
+        let meta = native_tool_catalog()
+            .into_iter()
+            .find(|m| m.name == "aegis.git.list")
+            .expect("aegis.git.list must be registered");
+        assert!(
+            meta.input_schema.get("required").is_none(),
+            "aegis.git.list should have no required fields"
+        );
+        // But it should still allow page/limit as optional properties.
+        let props = meta
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("aegis.git.list must define properties");
+        assert!(props.contains_key("page"));
+        assert!(props.contains_key("limit"));
+    }
+
+    #[test]
+    fn git_push_schema_only_requires_binding_id() {
+        let meta = native_tool_catalog()
+            .into_iter()
+            .find(|m| m.name == "aegis.git.push")
+            .expect("aegis.git.push must be registered");
+        let required = meta
+            .input_schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("aegis.git.push schema must declare required fields");
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(required_names, vec!["binding_id"]);
+        let props = meta
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("aegis.git.push must define properties");
+        assert!(props.contains_key("remote"));
+        assert!(props.contains_key("ref"));
+    }
+
+    #[test]
+    fn git_diff_schema_has_staged_boolean() {
+        let meta = native_tool_catalog()
+            .into_iter()
+            .find(|m| m.name == "aegis.git.diff")
+            .expect("aegis.git.diff must be registered");
+        let props = meta
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("aegis.git.diff must define properties");
+        let staged = props
+            .get("staged")
+            .expect("aegis.git.diff must allow optional 'staged' field");
+        assert_eq!(
+            staged.get("type").and_then(|v| v.as_str()),
+            Some("boolean"),
+            "'staged' must be a boolean"
+        );
+    }
+
+    #[test]
+    fn is_native_tool_matches_git_tools() {
+        assert!(is_native_tool("aegis.git.clone"));
+        assert!(is_native_tool("aegis.git.list"));
+        assert!(is_native_tool("aegis.git.status"));
+        assert!(is_native_tool("aegis.git.refresh"));
+        assert!(is_native_tool("aegis.git.delete"));
+        assert!(is_native_tool("aegis.git.commit"));
+        assert!(is_native_tool("aegis.git.push"));
+        assert!(is_native_tool("aegis.git.diff"));
+        // Negatives
+        assert!(!is_native_tool("aegis.git"));
+        assert!(!is_native_tool("aegis.git.unknown"));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-FROM rust:1.94-bookworm AS builder
+FROM rust:1.95-bookworm AS builder
 WORKDIR /workspace
 COPY aegis-seal-gateway/ ./aegis-seal-gateway/
 COPY aegis-proto/ ./aegis-proto/

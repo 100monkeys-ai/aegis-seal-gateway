@@ -649,7 +649,7 @@ mod tests {
 
     use super::*;
     use sqlx::postgres::PgPoolOptions;
-    use sqlx::{ConnectOptions, Row};
+    use sqlx::Row;
     use std::time::{Duration as StdDuration, Instant};
 
     /// Build a single-connection pool against the same database as

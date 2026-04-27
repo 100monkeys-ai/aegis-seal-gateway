@@ -54,3 +54,6 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 [build-dependencies]
 tonic-prost-build = "0.14"
 protoc-bin-vendored = "3.0"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

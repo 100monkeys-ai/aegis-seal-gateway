@@ -193,6 +193,15 @@ impl InvocationService {
                 .unwrap_or_default();
             let fsal_mounts = parse_fsal_mounts(&call.arguments)?;
 
+            // The SEAL session's tenant_id is the authenticated tenant
+            // (it is the verified JWT claim, equal to `call.tenant_id`).
+            // We pass it explicitly so cli_engine can enforce the
+            // tenant-arg match per ADR-097 / ADR-100.
+            let authenticated_tenant = if call.tenant_id.is_empty() {
+                None
+            } else {
+                Some(call.tenant_id.clone())
+            };
             self.cli_engine
                 .invoke(CliInvocation {
                     execution_id: call.exec_id,
@@ -204,6 +213,13 @@ impl InvocationService {
                     tenant_id: Some(call.tenant_id),
                     zaru_user_token: zaru_user_token.map(ToString::to_string),
                     allow_human_delegated_credentials: allow_human_delegated,
+                    authenticated_tenant,
+                    // SEAL sessions are issued to specific agent identities;
+                    // in the current design these are not service accounts.
+                    // If/when SEAL sessions are extended to carry an
+                    // identity_kind claim, plumb it through here.
+                    authenticated_identity_kind:
+                        crate::infrastructure::auth::IdentityKind::Consumer,
                 })
                 .await
         } else {
@@ -284,6 +300,13 @@ impl InvocationService {
                     tenant_id: None,
                     zaru_user_token: zaru_user_token.map(ToString::to_string),
                     allow_human_delegated_credentials: allow_human_delegated,
+                    // Internal inner-loop invocations do not have an
+                    // external authenticated tenant — they run with
+                    // service-internal trust, so no tenant-arg gate
+                    // applies (the arg is None anyway).
+                    authenticated_tenant: None,
+                    authenticated_identity_kind:
+                        crate::infrastructure::auth::IdentityKind::ServiceAccount,
                 })
                 .await
         } else {

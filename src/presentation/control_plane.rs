@@ -80,7 +80,7 @@ pub async fn register_spec(
         req.credential_path,
     )
     .map_err(error_response)?;
-    spec.tenant_id = tenant.0;
+    spec.tenant_id = tenant.tenant_id;
 
     let id = spec.id;
     let name = spec.name.clone();
@@ -119,7 +119,7 @@ pub async fn list_specs(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let specs = state
         .specs
-        .list_for_tenant(tenant.0.as_deref())
+        .list_for_tenant(tenant.tenant_id.as_deref())
         .await
         .map_err(error_response)?;
     Ok(Json(json!(specs)))
@@ -211,7 +211,7 @@ pub async fn register_workflow(
         req.steps,
     )
     .map_err(error_response)?;
-    workflow.tenant_id = tenant.0;
+    workflow.tenant_id = tenant.tenant_id;
     let id = workflow.id;
     let step_count = workflow.steps.len();
     let name = workflow.name.clone();
@@ -254,7 +254,7 @@ pub async fn list_workflows(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let list = state
         .workflows
-        .list_for_tenant(tenant.0.as_deref())
+        .list_for_tenant(tenant.tenant_id.as_deref())
         .await
         .map_err(error_response)?;
     Ok(Json(json!(list)))
@@ -350,7 +350,7 @@ pub async fn register_cli_tool(
         require_semantic_judge: req.require_semantic_judge,
         default_timeout_seconds: req.default_timeout_seconds,
         registry_credential_path: req.registry_credential_path,
-        tenant_id: tenant.0,
+        tenant_id: tenant.tenant_id.clone(),
     };
     tool.validate().map_err(error_response)?;
     let event_name = tool.name.clone();
@@ -388,7 +388,7 @@ pub async fn list_cli_tools(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let list = state
         .cli_tools
-        .list_for_tenant(tenant.0.as_deref())
+        .list_for_tenant(tenant.tenant_id.as_deref())
         .await
         .map_err(error_response)?;
     Ok(Json(json!(list)))
@@ -433,12 +433,12 @@ pub async fn list_tools(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let workflows = state
         .workflows
-        .list_for_tenant(tenant.0.as_deref())
+        .list_for_tenant(tenant.tenant_id.as_deref())
         .await
         .map_err(error_response)?;
     let cli_tools = state
         .cli_tools
-        .list_for_tenant(tenant.0.as_deref())
+        .list_for_tenant(tenant.tenant_id.as_deref())
         .await
         .map_err(error_response)?;
 
@@ -560,7 +560,7 @@ pub async fn upsert_seal_session(
                 .allowed_tool_patterns
                 .filter(|patterns| !patterns.is_empty())
                 .unwrap_or_else(|| vec!["*".to_string()]),
-            tenant_id: tenant.0,
+            tenant_id: tenant.tenant_id.clone(),
         })
         .await
         .map_err(error_response)?;
@@ -583,7 +583,7 @@ pub async fn list_seal_sessions(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let sessions = state
         .seal_sessions
-        .list_active_for_tenant(tenant.0.as_deref())
+        .list_active_for_tenant(tenant.tenant_id.as_deref())
         .await
         .map_err(error_response)?;
     Ok(Json(json!(sessions)))
@@ -687,7 +687,7 @@ pub async fn upsert_security_context(
             capabilities: req.capabilities,
             deny_list: req.deny_list,
             description: req.description,
-            tenant_id: tenant.0,
+            tenant_id: tenant.tenant_id.clone(),
         })
         .await
         .map_err(error_response)?;
@@ -710,7 +710,7 @@ pub async fn list_security_contexts(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let list = state
         .security_contexts
-        .list_for_tenant(tenant.0.as_deref())
+        .list_for_tenant(tenant.tenant_id.as_deref())
         .await
         .map_err(error_response)?;
     Ok(Json(json!(list)))

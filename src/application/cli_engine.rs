@@ -10,6 +10,7 @@ use tokio::process::Command;
 use crate::application::credential_resolver::{CredentialResolver, RegistryCredentials};
 use crate::application::semantic_gate::{SemanticDecision, SemanticGate};
 use crate::domain::{CredentialResolutionPath, EphemeralCliToolRepository, GatewayEvent};
+use crate::infrastructure::auth::IdentityKind;
 use crate::infrastructure::config::GatewayConfig;
 use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::persistence::EventStore;
@@ -33,9 +34,19 @@ pub struct CliInvocation {
     pub command: String,
     pub args: Vec<String>,
     pub fsal_mounts: Vec<CliFsalMount>,
+    /// Caller-supplied tenant override. Per ADR-100 this is honored only
+    /// when the authenticated identity is a service account; for consumer
+    /// callers it MUST be either absent or equal to the authenticated tenant.
     pub tenant_id: Option<String>,
     pub zaru_user_token: Option<String>,
     pub allow_human_delegated_credentials: bool,
+    /// Authenticated tenant proven by the SEAL session / JWT. The cli_engine
+    /// uses this as the source of truth and rejects mismatched
+    /// `invocation.tenant_id` values from non-service-account callers.
+    pub authenticated_tenant: Option<String>,
+    /// Identity kind from the verified caller credentials. Service accounts
+    /// may delegate `tenant_id` per ADR-100; consumers may not.
+    pub authenticated_identity_kind: IdentityKind,
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +81,33 @@ impl CliEngine {
         &self,
         invocation: CliInvocation,
     ) -> Result<serde_json::Value, GatewayError> {
+        // Tenant boundary enforcement (ADR-097 / ADR-100):
+        // The authenticated tenant is the only source of truth. A
+        // caller-supplied `invocation.tenant_id` may differ ONLY when the
+        // authenticated identity is a Keycloak service account (delegated
+        // tenant context per ADR-100). For consumer-tier callers, any
+        // mismatch is a tenant-isolation violation and must be rejected.
+        if let Some(requested) = invocation.tenant_id.as_deref() {
+            let trimmed = requested.trim();
+            if !trimmed.is_empty() {
+                let authenticated = invocation.authenticated_tenant.as_deref();
+                let matches_authenticated = authenticated == Some(trimmed);
+                let is_service_account = matches!(
+                    invocation.authenticated_identity_kind,
+                    IdentityKind::ServiceAccount
+                );
+                if !matches_authenticated && !is_service_account {
+                    tracing::warn!(
+                        execution_id = %invocation.execution_id,
+                        requested_tenant = %trimmed,
+                        authenticated_tenant = ?authenticated,
+                        "rejecting CLI invocation: tenant arg does not match authenticated tenant"
+                    );
+                    return Err(GatewayError::Forbidden);
+                }
+            }
+        }
+
         let tool = self
             .cli_tools
             .find_by_name(&invocation.tool_name)
@@ -516,9 +554,140 @@ mod tests {
                 tenant_id: None,
                 zaru_user_token: Some("user-token".to_string()),
                 allow_human_delegated_credentials: false,
+                authenticated_tenant: None,
+                authenticated_identity_kind: IdentityKind::Consumer,
             })
             .await;
 
         assert!(matches!(result, Err(GatewayError::Forbidden)));
+    }
+
+    fn cli_tool_fixture() -> EphemeralCliTool {
+        EphemeralCliTool {
+            name: "terraform".to_string(),
+            description: "infra cli".to_string(),
+            docker_image: "mcp/terraform:1.9".to_string(),
+            allowed_subcommands: vec!["plan".to_string()],
+            require_semantic_judge: false,
+            default_timeout_seconds: 30,
+            registry_credential_path: None,
+            tenant_id: None,
+        }
+    }
+
+    fn cli_invocation_with(
+        invocation_tenant: Option<&str>,
+        authenticated_tenant: Option<&str>,
+        identity_kind: IdentityKind,
+    ) -> CliInvocation {
+        CliInvocation {
+            execution_id: "exec-1".to_string(),
+            security_context: "internal".to_string(),
+            tool_name: "terraform".to_string(),
+            command: "plan".to_string(),
+            args: vec![],
+            fsal_mounts: vec![CliFsalMount {
+                volume_id: "vol-1".to_string(),
+                mount_path: "/workspace".to_string(),
+                read_only: false,
+                remote_path: "/exec-1/vol-1".to_string(),
+            }],
+            tenant_id: invocation_tenant.map(ToString::to_string),
+            zaru_user_token: None,
+            allow_human_delegated_credentials: false,
+            authenticated_tenant: authenticated_tenant.map(ToString::to_string),
+            authenticated_identity_kind: identity_kind,
+        }
+    }
+
+    fn make_engine(repo: Arc<InMemoryCliToolRepo>) -> CliEngine {
+        CliEngine::new(
+            repo,
+            CredentialResolver::new(test_config(), None),
+            SemanticGate::new(None),
+            Arc::new(NoopEventStore),
+            test_config(),
+        )
+    }
+
+    /// Regression: a Consumer-tier caller may NOT pass `invocation.tenant_id`
+    /// that differs from the authenticated tenant. Per ADR-097, the
+    /// authenticated tenant is the sole source of truth; a mismatched arg
+    /// would have leaked another tenant's resources.
+    #[tokio::test]
+    async fn cli_engine_rejects_tenant_arg_mismatch_for_consumer() {
+        let repo = Arc::new(InMemoryCliToolRepo::default());
+        repo.save(cli_tool_fixture()).await.expect("seed tool");
+        let engine = make_engine(repo);
+
+        let result = engine
+            .invoke(cli_invocation_with(
+                Some("u-otheruser-deadbeef"),
+                Some("u-mytenant-cafef00d"),
+                IdentityKind::Consumer,
+            ))
+            .await;
+
+        assert!(
+            matches!(result, Err(GatewayError::Forbidden)),
+            "consumer tenant-arg mismatch must be rejected as Forbidden, got: {:?}",
+            result
+        );
+    }
+
+    /// Regression: per ADR-100, a ServiceAccount identity is permitted to
+    /// delegate a tenant via `invocation.tenant_id` even when it differs
+    /// from its own authenticated tenant. The mismatch check must not fire.
+    /// We cannot complete the full container invocation in unit tests, so
+    /// we assert that the request progresses past the tenant gate (i.e. the
+    /// failure mode is NOT `Forbidden`).
+    #[tokio::test]
+    async fn cli_engine_allows_tenant_arg_delegation_for_service_account() {
+        let repo = Arc::new(InMemoryCliToolRepo::default());
+        repo.save(cli_tool_fixture()).await.expect("seed tool");
+        let engine = make_engine(repo);
+
+        let result = engine
+            .invoke(cli_invocation_with(
+                Some("u-delegated-tenant"),
+                Some("svc-zaru-tenant"),
+                IdentityKind::ServiceAccount,
+            ))
+            .await;
+
+        // The tenant-mismatch check (Forbidden) must NOT be the failure
+        // here. Other downstream errors (e.g. failing to spawn a container
+        // in the unit-test environment) are acceptable for this regression
+        // — we only care that the delegation gate let the call through.
+        match &result {
+            Err(GatewayError::Forbidden) => {
+                panic!("service-account delegation must NOT be rejected as Forbidden")
+            }
+            _ => {}
+        }
+    }
+
+    /// Regression: when `invocation.tenant_id` matches the authenticated
+    /// tenant exactly, a Consumer caller is allowed through the tenant gate.
+    #[tokio::test]
+    async fn cli_engine_allows_tenant_arg_match_for_consumer() {
+        let repo = Arc::new(InMemoryCliToolRepo::default());
+        repo.save(cli_tool_fixture()).await.expect("seed tool");
+        let engine = make_engine(repo);
+
+        let result = engine
+            .invoke(cli_invocation_with(
+                Some("u-mytenant-cafef00d"),
+                Some("u-mytenant-cafef00d"),
+                IdentityKind::Consumer,
+            ))
+            .await;
+
+        match &result {
+            Err(GatewayError::Forbidden) => {
+                panic!("matching tenant arg must NOT be rejected as Forbidden")
+            }
+            _ => {}
+        }
     }
 }

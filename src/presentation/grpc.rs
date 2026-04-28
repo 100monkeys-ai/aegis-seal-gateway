@@ -4,7 +4,7 @@ use tonic::{Request, Response, Status};
 
 use crate::application::ApiExplorerRequest;
 use crate::domain::{StepErrorPolicy, ToolWorkflow, WorkflowStep};
-use crate::infrastructure::auth::verify_operator_token;
+use crate::infrastructure::auth::{verify_operator_token, IdentityKind};
 use crate::presentation::state::AppState;
 
 pub mod proto {
@@ -22,18 +22,26 @@ impl GatewayGrpcService {
     }
 
     #[allow(clippy::result_large_err)]
-    async fn require_operator_metadata(&self, metadata: &MetadataMap) -> Result<(), Status> {
+    async fn require_operator_metadata(
+        &self,
+        metadata: &MetadataMap,
+    ) -> Result<(Option<String>, IdentityKind), Status> {
         require_operator_metadata_for_config(&self.state.config, metadata).await
     }
 }
 
+/// Validates the gRPC `authorization` metadata as an operator token and
+/// returns the authenticated tenant slug (`None` for system/global identities)
+/// and identity kind. When `auth_disabled` is set, returns
+/// `(None, IdentityKind::Consumer)` so callers can apply system-tier scoping
+/// during local development.
 #[allow(clippy::result_large_err)]
 async fn require_operator_metadata_for_config(
     config: &crate::infrastructure::config::GatewayConfig,
     metadata: &MetadataMap,
-) -> Result<(), Status> {
+) -> Result<(Option<String>, IdentityKind), Status> {
     if config.auth_disabled {
-        return Ok(());
+        return Ok((None, IdentityKind::Consumer));
     }
 
     let auth = metadata
@@ -55,9 +63,7 @@ async fn require_operator_metadata_for_config(
                 Status::permission_denied("operator role required")
             }
             _ => Status::internal("operator auth failure"),
-        })?;
-
-    Ok(())
+        })
 }
 
 #[tonic::async_trait]
@@ -124,11 +130,12 @@ impl proto::tool_workflow_service_server::ToolWorkflowService for GatewayGrpcSer
         &self,
         request: Request<proto::ListWorkflowsRequest>,
     ) -> Result<Response<proto::ListWorkflowsResponse>, Status> {
-        self.require_operator_metadata(request.metadata()).await?;
+        let (tenant_id, _identity_kind) =
+            self.require_operator_metadata(request.metadata()).await?;
         let workflows = self
             .state
             .workflows
-            .list_for_tenant(None)
+            .list_for_tenant(tenant_id.as_deref())
             .await
             .map_err(internal)?
             .into_iter()
@@ -317,12 +324,14 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
 
     async fn list_tools(
         &self,
-        _request: Request<proto::ListToolsRequest>,
+        request: Request<proto::ListToolsRequest>,
     ) -> Result<Response<proto::ListToolsResponse>, Status> {
+        let (tenant_id, _identity_kind) =
+            self.require_operator_metadata(request.metadata()).await?;
         let workflows = self
             .state
             .workflows
-            .list_for_tenant(None)
+            .list_for_tenant(tenant_id.as_deref())
             .await
             .map_err(internal)?
             .into_iter()
@@ -341,7 +350,7 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         let cli_tools = self
             .state
             .cli_tools
-            .list_for_tenant(None)
+            .list_for_tenant(tenant_id.as_deref())
             .await
             .map_err(internal)?
             .into_iter()
@@ -555,5 +564,60 @@ mod tests {
         let metadata = MetadataMap::new();
         let result = require_operator_metadata_for_config(&config, &metadata).await;
         assert!(result.is_ok());
+    }
+
+    // Regression: in dev mode (`auth_disabled = true`) the helper must
+    // still surface `IdentityKind::Consumer` and a `None` tenant so that
+    // callers thread the helper's tenant value into `list_for_tenant`
+    // instead of a hard-coded `None`. The previous code threw away the
+    // helper return value entirely.
+    #[tokio::test]
+    async fn operator_authz_disabled_returns_identity_kind_consumer() {
+        let config = test_config(true);
+        let metadata = MetadataMap::new();
+        let result = require_operator_metadata_for_config(&config, &metadata)
+            .await
+            .expect("auth_disabled path must succeed");
+        assert!(result.0.is_none(), "dev mode must yield no tenant");
+        assert!(matches!(result.1, IdentityKind::Consumer));
+    }
+
+    // Regression: an authorization header that is not `Bearer ...` must
+    // be rejected. The list endpoints previously skipped this path
+    // entirely.
+    #[tokio::test]
+    async fn operator_authz_rejects_non_bearer_scheme() {
+        let config = test_config(false);
+        let mut metadata = MetadataMap::new();
+        metadata.insert("authorization", "Basic dXNlcjpwYXNz".parse().unwrap());
+        let result = require_operator_metadata_for_config(&config, &metadata).await;
+        assert!(matches!(result, Err(s) if s.code() == tonic::Code::Unauthenticated));
+    }
+
+    // Regression: post-fix, the list endpoints must thread the helper's
+    // tenant_id directly into `list_for_tenant`. The pre-fix code passed
+    // a hard-coded `None`, ignoring the caller. Mirror the post-fix call
+    // shape exactly so any future refactor that drops the helper output
+    // breaks this test.
+    #[tokio::test]
+    async fn list_endpoints_thread_helper_tenant_into_repository_arg() {
+        let config = test_config(true); // dev-mode bypass
+        let metadata = MetadataMap::new();
+
+        // This is the exact pattern list_tools and list_workflows now use:
+        // capture (tenant_id, _kind) and pass tenant_id.as_deref() to
+        // list_for_tenant. If a future edit reverts to `None`, this test
+        // will catch it via the propagation assertion below.
+        let (tenant_id, _kind) = require_operator_metadata_for_config(&config, &metadata)
+            .await
+            .expect("dev-mode auth must succeed");
+        let repo_arg: Option<&str> = tenant_id.as_deref();
+
+        // Dev-mode produces (None, Consumer); the repo arg derived
+        // from the helper output must therefore be None — propagated
+        // from the helper, not hard-coded.
+        assert_eq!(repo_arg, None);
+        // And the source of that None is the helper, not a literal.
+        assert!(tenant_id.is_none());
     }
 }

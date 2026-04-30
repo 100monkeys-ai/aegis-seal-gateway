@@ -14,8 +14,12 @@ use crate::domain::{
 use crate::infrastructure::auth::IdentityKind;
 use crate::infrastructure::config::GatewayConfig;
 use crate::infrastructure::errors::GatewayError;
+use crate::infrastructure::metrics::{
+    record_attestation, record_policy_violation, record_tool_invocation,
+};
 use crate::infrastructure::persistence::EventStore;
 use crate::infrastructure::seal::verify_and_extract;
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct InvocationService {
@@ -63,17 +67,27 @@ impl InvocationService {
         zaru_user_token: Option<&str>,
         authenticated_identity_kind: IdentityKind,
     ) -> Result<Value, GatewayError> {
-        let unsecured_claims: serde_json::Value = decode_unverified(&envelope.security_token)?;
+        let unsecured_claims: serde_json::Value = decode_unverified(&envelope.security_token)
+            .map_err(|e| {
+                record_attestation("malformed");
+                e
+            })?;
         let execution_id = unsecured_claims
             .get("exec_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GatewayError::Seal("security token missing exec_id".to_string()))?;
+            .ok_or_else(|| {
+                record_attestation("malformed");
+                GatewayError::Seal("security token missing exec_id".to_string())
+            })?;
 
         let session = self
             .seal_sessions
             .find_by_execution_id(execution_id)
             .await?
-            .ok_or(GatewayError::Unauthorized)?;
+            .ok_or_else(|| {
+                record_attestation("unauthorized");
+                GatewayError::Unauthorized
+            })?;
 
         let call = verify_and_extract(
             &envelope,
@@ -81,7 +95,21 @@ impl InvocationService {
             &self.config.seal_jwt_public_key_pem,
             &self.config.seal_jwt_issuer,
             &self.config.seal_jwt_audience,
-        )?;
+        )
+        .map_err(|e| {
+            // Signature-related rejection emits a dedicated outcome label;
+            // `aegis_seal_signature_failures_total` is incremented inside
+            // `verify_and_extract` itself.
+            match &e {
+                GatewayError::Seal(msg)
+                    if msg.contains("signature") || msg.contains("public key") =>
+                {
+                    record_attestation("signature_invalid");
+                }
+                _ => record_attestation("malformed"),
+            }
+            e
+        })?;
 
         // JTI is REQUIRED — absence indicates a forged/legacy token (SEAL spec §9.1).
         let jti = call
@@ -95,6 +123,7 @@ impl InvocationService {
             .min(chrono::Utc::now() + chrono::Duration::seconds(30));
         let is_new = self.jti_repo.record_jti(jti, jti_expiry).await?;
         if !is_new {
+            record_attestation("replay");
             return Err(GatewayError::Seal(
                 "duplicate JTI — replay detected".to_string(),
             ));
@@ -102,6 +131,7 @@ impl InvocationService {
 
         // scp claim must match the session's security context (SEAL spec §4.2.2).
         if call.scp != session.security_context {
+            record_attestation("context_mismatch");
             return Err(GatewayError::Seal(
                 "security context mismatch: scp claim does not match session security_context"
                     .to_string(),
@@ -109,15 +139,19 @@ impl InvocationService {
         }
 
         if call.exec_id != session.execution_id {
+            record_attestation("unauthorized");
             return Err(GatewayError::Unauthorized);
         }
         if call.sub != session.agent_id {
+            record_attestation("unauthorized");
             return Err(GatewayError::Unauthorized);
         }
         if session.session_status != SealSessionStatus::Active {
+            record_attestation("unauthorized");
             return Err(GatewayError::Unauthorized);
         }
         if session.expires_at <= chrono::Utc::now() {
+            record_attestation("expired");
             return Err(GatewayError::Unauthorized);
         }
         if !session
@@ -125,6 +159,7 @@ impl InvocationService {
             .iter()
             .any(|pattern| tool_pattern_matches(pattern, &call.tool_name))
         {
+            record_attestation("tool_not_allowed");
             return Err(GatewayError::Seal(format!(
                 "tool not allowed: {}",
                 call.tool_name
@@ -134,10 +169,24 @@ impl InvocationService {
             .security_contexts
             .find_by_name(&session.security_context)
             .await?
-            .ok_or(GatewayError::Forbidden)?;
+            .ok_or_else(|| {
+                record_attestation("forbidden");
+                GatewayError::Forbidden
+            })?;
 
-        // Evaluate the security context against the tool call (ADR-088 A1)
-        security_context.evaluate(&call.tool_name, &call.arguments)?;
+        // Evaluate the security context against the tool call (ADR-088 A1).
+        // Policy violations are recorded with a stable, low-cardinality label
+        // before propagation.
+        if let Err(violation) = security_context.evaluate(&call.tool_name, &call.arguments) {
+            record_policy_violation(&violation);
+            record_attestation("forbidden");
+            return Err(GatewayError::from(violation));
+        }
+
+        // Attestation succeeded: the SEAL envelope and policy evaluation both
+        // accepted this call. Subsequent failures are tool-execution failures,
+        // not attestation failures.
+        record_attestation("ok");
 
         // Publish ToolCallAuthorized event (Gap 035-7)
         if let Ok(event_val) =
@@ -164,9 +213,18 @@ impl InvocationService {
                     "orchestrator_url is not configured; native tools are unavailable".to_string(),
                 )
             })?;
-            return engine
+            let started = Instant::now();
+            let result = engine
                 .invoke(&call.tool_name, &call.arguments, &envelope.security_token)
                 .await;
+            let status = if result.is_ok() { "ok" } else { "error" };
+            record_tool_invocation(
+                &call.tool_name,
+                "native",
+                status,
+                started.elapsed().as_secs_f64(),
+            );
+            return result;
         }
 
         if self
@@ -204,7 +262,10 @@ impl InvocationService {
             } else {
                 Some(call.tenant_id.clone())
             };
-            self.cli_engine
+            let tool_name_for_metric = call.tool_name.clone();
+            let started = Instant::now();
+            let result = self
+                .cli_engine
                 .invoke(CliInvocation {
                     execution_id: call.exec_id,
                     security_context: session.security_context,
@@ -224,14 +285,24 @@ impl InvocationService {
                     // tenant.
                     authenticated_identity_kind,
                 })
-                .await
+                .await;
+            let status = if result.is_ok() { "ok" } else { "error" };
+            record_tool_invocation(
+                &tool_name_for_metric,
+                "cli",
+                status,
+                started.elapsed().as_secs_f64(),
+            );
+            result
         } else {
             let tenant_id_opt = if call.tenant_id.is_empty() {
                 None
             } else {
                 Some(call.tenant_id.as_str())
             };
-            self.workflow_engine
+            let started = Instant::now();
+            let result = self
+                .workflow_engine
                 .invoke_by_name(
                     &call.exec_id,
                     &call.tool_name,
@@ -240,7 +311,15 @@ impl InvocationService {
                     allow_human_delegated,
                     tenant_id_opt,
                 )
-                .await
+                .await;
+            let status = if result.is_ok() { "ok" } else { "error" };
+            record_tool_invocation(
+                &call.tool_name,
+                "workflow",
+                status,
+                started.elapsed().as_secs_f64(),
+            );
+            result
         }
     }
 

@@ -26,8 +26,11 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6.0"
 ed25519-dalek = "2.1"
+futures = "0.3"
 handlebars = "6.2"
 http = "1.1"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false, features = ["http-listener"] }
 jsonwebtoken = "9.3"
 jsonpath_lib = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

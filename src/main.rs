@@ -24,6 +24,7 @@ use domain::{
 use infrastructure::auth::{inject_seal_tenant_context, require_operator};
 use infrastructure::config::GatewayConfig;
 use infrastructure::http_client::HttpClient;
+use infrastructure::metrics::{init_metrics, spawn_session_gauge_task};
 use infrastructure::persistence::postgres::PostgresStore;
 use infrastructure::persistence::sqlite::SqliteStore;
 use infrastructure::persistence::EventStore;
@@ -33,6 +34,7 @@ use presentation::grpc::proto::gateway_invocation_service_server::GatewayInvocat
 use presentation::grpc::proto::tool_workflow_service_server::ToolWorkflowServiceServer;
 use presentation::grpc::GatewayGrpcService;
 use presentation::invocation::*;
+use presentation::metrics_middleware::{http_metrics_middleware, GrpcMetricsLayer};
 use presentation::openapi::openapi_spec;
 use presentation::state::AppState;
 use presentation::ui;
@@ -53,6 +55,9 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
+
+    // Install the Prometheus exporter before any metric is emitted (ADR-058).
+    init_metrics()?;
 
     let config = GatewayConfig::load_or_default()?;
     let mut credential_pg_pool: Option<sqlx::PgPool> = None;
@@ -107,6 +112,9 @@ async fn main() -> anyhow::Result<()> {
             })
             .await?;
     }
+
+    // Periodic refresh of the active SEAL session gauge.
+    spawn_session_gauge_task(seal_sessions.clone());
 
     // Periodic JTI cleanup — purge expired entries every 30 seconds.
     {
@@ -224,6 +232,10 @@ async fn main() -> anyhow::Result<()> {
             .route("/ui/styles.css", get(ui::styles_css));
     }
 
+    // HTTP metrics middleware is applied last so `MatchedPath` is populated
+    // for every route by the time the middleware runs (ADR-058 §HTTP labels).
+    let app = app.layer(middleware::from_fn(http_metrics_middleware));
+
     let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
     tracing::info!("aegis-seal-gateway listening on {}", config.bind_addr);
 
@@ -237,6 +249,7 @@ async fn main() -> anyhow::Result<()> {
     let (http_result, grpc_result) = tokio::join!(
         axum::serve(listener, app),
         tonic::transport::Server::builder()
+            .layer(GrpcMetricsLayer)
             .add_service(ToolWorkflowServiceServer::new(grpc_service.clone()))
             .add_service(GatewayInvocationServiceServer::new(grpc_service))
             .serve(grpc_addr),

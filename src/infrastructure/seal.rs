@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::domain::{SealEnvelope, SealToolCall, SealToolParams};
 use crate::infrastructure::errors::GatewayError;
+use crate::infrastructure::metrics::record_signature_failure;
 
 #[derive(Debug, Clone, Deserialize)]
 struct SealClaims {
@@ -49,24 +50,36 @@ pub fn verify_and_extract(
 ) -> Result<SealVerifiedCall, GatewayError> {
     let pk_bytes = base64::engine::general_purpose::STANDARD
         .decode(public_key_b64)
-        .map_err(|e| GatewayError::Seal(format!("invalid public key b64: {e}")))?;
-    let pk_arr: [u8; 32] = pk_bytes
-        .try_into()
-        .map_err(|_| GatewayError::Seal("public key must be 32 bytes".to_string()))?;
-    let key = VerifyingKey::from_bytes(&pk_arr)
-        .map_err(|e| GatewayError::Seal(format!("invalid public key: {e}")))?;
+        .map_err(|e| {
+            record_signature_failure();
+            GatewayError::Seal(format!("invalid public key b64: {e}"))
+        })?;
+    let pk_arr: [u8; 32] = pk_bytes.try_into().map_err(|_| {
+        record_signature_failure();
+        GatewayError::Seal("public key must be 32 bytes".to_string())
+    })?;
+    let key = VerifyingKey::from_bytes(&pk_arr).map_err(|e| {
+        record_signature_failure();
+        GatewayError::Seal(format!("invalid public key: {e}"))
+    })?;
 
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(&envelope.signature)
-        .map_err(|e| GatewayError::Seal(format!("invalid signature b64: {e}")))?;
-    let sig_arr: [u8; 64] = sig_bytes
-        .try_into()
-        .map_err(|_| GatewayError::Seal("signature must be 64 bytes".to_string()))?;
+        .map_err(|e| {
+            record_signature_failure();
+            GatewayError::Seal(format!("invalid signature b64: {e}"))
+        })?;
+    let sig_arr: [u8; 64] = sig_bytes.try_into().map_err(|_| {
+        record_signature_failure();
+        GatewayError::Seal("signature must be 64 bytes".to_string())
+    })?;
     let sig = Signature::from_bytes(&sig_arr);
 
     let message = signed_message(envelope)?;
-    key.verify(&message, &sig)
-        .map_err(|e| GatewayError::Seal(format!("signature verify failed: {e}")))?;
+    key.verify(&message, &sig).map_err(|e| {
+        record_signature_failure();
+        GatewayError::Seal(format!("signature verify failed: {e}"))
+    })?;
 
     if seal_jwt_public_key_pem.trim().is_empty() {
         return Err(GatewayError::Seal(

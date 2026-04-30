@@ -4,6 +4,7 @@ pub mod container_cli;
 pub mod errors;
 pub mod http_client;
 pub mod jwks_validator;
+pub mod metrics;
 pub mod openapi;
 pub mod persistence;
 pub mod seal;

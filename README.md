@@ -126,6 +126,10 @@ spec:
 - `SEAL_GATEWAY_NFS_HOST` (default: `127.0.0.1`)
 - `SEAL_GATEWAY_NFS_PORT` (default: `2049`)
 - `SEAL_GATEWAY_NFS_MOUNT_PORT` (default: `20048`)
+- `METRICS_PORT` (default: `9092`) — Prometheus `/metrics` endpoint port
+- `METRICS_BIND` (default: `127.0.0.1`) — metrics listener bind address;
+  set to `0.0.0.0` in deployment manifests so Prometheus can scrape
+  across the pod network
 - `SEAL_GATEWAY_CONFIG_PATH` (optional explicit path to YAML manifest)
 
 ## Run

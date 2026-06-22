@@ -20,10 +20,10 @@ jobs:
     name: Check & Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: aegis-seal-gateway
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: 100monkeys-ai/aegis-proto
           path: aegis-proto
@@ -46,7 +46,7 @@ jobs:
     name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: aegis-seal-gateway
       - name: Install Rust toolchain
@@ -75,10 +75,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: aegis-seal-gateway
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: 100monkeys-ai/aegis-proto
           path: aegis-proto
@@ -98,10 +98,10 @@ jobs:
     name: Package verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: aegis-seal-gateway
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: 100monkeys-ai/aegis-proto
           path: aegis-proto

@@ -32,12 +32,12 @@ jobs:
 
     steps:
       - name: Checkout gateway
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: aegis-seal-gateway
 
       - name: Checkout proto repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: 100monkeys-ai/aegis-proto
           path: aegis-proto
@@ -78,12 +78,12 @@ jobs:
 
     steps:
       - name: Checkout gateway
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           path: aegis-seal-gateway
 
       - name: Checkout proto repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: 100monkeys-ai/aegis-proto
           path: aegis-proto
@@ -121,7 +121,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download all artifacts
         uses: actions/download-artifact@v8

@@ -43,8 +43,9 @@ jobs:
           path: aegis-proto
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; toolchain pinned by rust-toolchain.toml and the input below
         with:
+          toolchain: "1.98.1"
           targets: x86_64-unknown-linux-gnu
 
       - name: Cache cargo registry & build
@@ -89,8 +90,9 @@ jobs:
           path: aegis-proto
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; toolchain pinned by rust-toolchain.toml and the input below
         with:
+          toolchain: "1.98.1"
           targets: aarch64-apple-darwin
 
       - name: Cache cargo registry & build

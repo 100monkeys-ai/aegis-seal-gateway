@@ -1,0 +1,35 @@
+# Pins the Rust toolchain for this repository.
+#
+# Why this file exists: every workflow here installed `dtolnay/rust-toolchain@stable`
+# with no toolchain file, so the compiler was whatever `stable` resolved to on the day
+# a run happened and this repository's CI verdict was a function of the calendar rather
+# than of the tree. `aegis-orchestrator` has already been bitten by exactly this: the
+# identical tree passed Pipeline on 2026-05-09 (run 25590016717) and failed it on
+# 2026-09-04 (run 33909474652) with four clippy errors that clippy had gained in
+# between. Nothing here has failed that way yet, and the pin is what keeps it that way.
+#
+# The mechanism, read from the action rather than assumed: `dtolnay/rust-toolchain`
+# runs `rustup toolchain install <toolchain> --profile minimal --no-self-update` and
+# then `rustup default <toolchain>`. It does not set RUSTUP_TOOLCHAIN. rustup ranks a
+# directory `rust-toolchain.toml` above `rustup default`, and every cargo step in every
+# workflow here runs with `working-directory: aegis-seal-gateway` against a checkout
+# placed at `path: aegis-seal-gateway`, so this file outranks the action at all eleven
+# call sites. That was verified site by site, not inferred from one of them.
+#
+# `components` is load-bearing: rustup treats `stable` and `1.98.1` as separate
+# toolchain installations, so a component installed into `stable` is not visible to
+# `1.98.1`. Without these two entries `cargo clippy` and `cargo fmt --check` would fail
+# to find their components under the pin.
+#
+# 1.98.1 is the version CI was already resolving — `rustc 1.98.1 (48a229cea 2026-09-01)`,
+# printed by run 33910940353 on 2026-09-04. The pin freezes the verdict where it already
+# is rather than moving it.
+#
+# Raising this version is a deliberate act: bump it, run
+# `cargo clippy --locked -- -D warnings` and `cargo fmt --all -- --check`, and fix what
+# the new toolchain reports in the same change.
+
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

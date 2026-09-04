@@ -28,7 +28,7 @@ jobs:
           repository: 100monkeys-ai/aegis-proto
           path: aegis-proto
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; this action publishes no version tag, and the SHA must be in master's history
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; toolchain pinned by rust-toolchain.toml and the input below
         with:
           toolchain: "1.98.1"
           components: clippy
@@ -51,7 +51,7 @@ jobs:
         with:
           path: aegis-seal-gateway
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; this action publishes no version tag, and the SHA must be in master's history
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; toolchain pinned by rust-toolchain.toml and the input below
         with:
           toolchain: "1.98.1"
           components: rustfmt
@@ -85,7 +85,7 @@ jobs:
           repository: 100monkeys-ai/aegis-proto
           path: aegis-proto
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; this action publishes no version tag, and the SHA must be in master's history
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; toolchain pinned by rust-toolchain.toml and the input below
         with:
           toolchain: "1.98.1"
       - name: Cache cargo registry & build
@@ -110,7 +110,7 @@ jobs:
           repository: 100monkeys-ai/aegis-proto
           path: aegis-proto
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; this action publishes no version tag, and the SHA must be in master's history
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master @ 2026-09-03; toolchain pinned by rust-toolchain.toml and the input below
         with:
           toolchain: "1.98.1"
       - name: Cache cargo registry & build

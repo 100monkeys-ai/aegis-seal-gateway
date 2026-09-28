@@ -271,6 +271,13 @@ pub fn claim_cases() -> Vec<ClaimCase> {
             accepted: false,
         },
         ClaimCase {
+            // GHSA-h395-gr6q-cpjc: a wrong-typed `nbf` must not read as absent.
+            name: "nbf in the future, as a string",
+            mutate: |c| set(c, "nbf", serde_json::json!((now() + 3600).to_string())),
+            signing: Signing::Trusted,
+            accepted: false,
+        },
+        ClaimCase {
             name: "nbf in the past",
             mutate: |c| set(c, "nbf", serde_json::json!(now() - 60)),
             signing: Signing::Trusted,

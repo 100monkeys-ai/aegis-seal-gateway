@@ -582,6 +582,60 @@ mod tests {
         assert!(matches!(result.1, IdentityKind::Consumer));
     }
 
+    /// A gateway with operator authentication on, trusting the test JWKS,
+    /// [`TRUSTED_ISSUER`] and [`ACCEPTED_AUDIENCE`].
+    fn operator_config_trusting_test_keys() -> GatewayConfig {
+        use crate::infrastructure::test_tokens::{trusted_jwks, ACCEPTED_AUDIENCE, TRUSTED_ISSUER};
+        let mut config = test_config(false);
+        config.jwks_validator = std::sync::Arc::new(
+            crate::infrastructure::jwks_validator::JwksValidator::with_cached_jwks(trusted_jwks()),
+        );
+        config.operator_jwt_issuer = TRUSTED_ISSUER.to_string();
+        config.operator_jwt_audience = ACCEPTED_AUDIENCE.to_string();
+        config
+    }
+
+    // Security audit 005: an operator token must carry `exp`, `iss` and `aud`,
+    // `iss` must be exactly the trusted issuer and `aud` must name the accepted
+    // audience. Driven through the same authorization step every gRPC call of
+    // the gateway runs, with tokens really signed by a key the JWKS publishes.
+    #[tokio::test]
+    async fn operator_path_requires_and_validates_exp_iss_aud() {
+        use crate::infrastructure::test_tokens::{
+            assert_claim_matrix, now, ACCEPTED_AUDIENCE, TRUSTED_ISSUER,
+        };
+        let config = operator_config_trusting_test_keys();
+        let valid_operator_claims = serde_json::json!({
+            "iss": TRUSTED_ISSUER,
+            "aud": ACCEPTED_AUDIENCE,
+            "exp": now() + 3600,
+            "iat": now(),
+            "sub": "operator-1",
+            "aegis_role": "aegis:operator",
+            "tenant_id": "tenant-a",
+        });
+        assert_claim_matrix("operator path", valid_operator_claims, |token| {
+            let config = config.clone();
+            async move {
+                let mut metadata = MetadataMap::new();
+                metadata.insert(
+                    "authorization",
+                    format!("Bearer {token}").parse().expect("metadata value"),
+                );
+                match require_operator_metadata_for_config(&config, &metadata).await {
+                    Ok(_) => true,
+                    Err(status) => {
+                        // Every refusal is the ordinary one, whichever check refused.
+                        assert_eq!(status.code(), tonic::Code::Unauthenticated);
+                        assert_eq!(status.message(), "operator token validation failed");
+                        false
+                    }
+                }
+            }
+        })
+        .await;
+    }
+
     // Regression: an authorization header that is not `Bearer ...` must
     // be rejected. The list endpoints previously skipped this path
     // entirely.

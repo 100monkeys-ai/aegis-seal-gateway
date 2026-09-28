@@ -3,7 +3,7 @@
 //! Live JWKS validator for operator JWT authentication — ADR-041.
 
 use axum::http::StatusCode;
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{decode, decode_header, DecodingKey};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
+
+use crate::infrastructure::token_validation::rs256_validation;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +85,24 @@ impl JwksValidator {
             jwks_uri,
             ttl: Duration::from_secs(ttl_secs),
             cache: RwLock::new(None),
+            http_client: Client::new(),
+        }
+    }
+
+    /// A validator whose key cache already holds `jwks`, as though it had just
+    /// been fetched, so a test verifies tokens without an identity provider.
+    #[cfg(test)]
+    pub(crate) fn with_cached_jwks(jwks: Value) -> Self {
+        let keys: JwksResponse = serde_json::from_value(jwks).expect("JWKS document");
+        let ttl = Duration::from_secs(3600);
+        Self {
+            jwks_uri: String::new(),
+            ttl,
+            cache: RwLock::new(Some(CachedJwks {
+                keys,
+                fetched_at: Instant::now(),
+                ttl,
+            })),
             http_client: Client::new(),
         }
     }
@@ -177,12 +197,12 @@ impl JwksValidator {
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-        let mut validation = Validation::new(Algorithm::RS256);
-        validation.set_issuer(&[issuer]);
-        validation.set_audience(&[audience]);
+        let validation = rs256_validation(issuer, audience);
 
+        // The reason names the failed check (a missing or mismatched claim, a
+        // bad signature, expiry); the caller only ever sees 401.
         let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
-            warn!(error = %e, "JWT validation failed");
+            warn!(reason = %e, "Operator JWT refused");
             StatusCode::UNAUTHORIZED
         })?;
 

@@ -70,7 +70,7 @@ spec:
     disabled: false
     operator_jwks_uri: "https://auth.example.com/realms/aegis/protocol/openid-connect/certs"
     jwks_cache_ttl_secs: 300
-    operator_jwt_issuer: "aegis-keycloak"
+    operator_jwt_issuer: "https://auth.example.com/realms/aegis"
     operator_jwt_audience: "aegis-seal-gateway"
     seal_jwt_public_key_pem: ""
     seal_jwt_issuer: "aegis-orchestrator"
@@ -100,11 +100,16 @@ spec:
   validation (required when auth enabled)
 - `SEAL_GATEWAY_JWKS_CACHE_TTL_SECS` — JWKS cache TTL in seconds
   (optional, default: 300)
-- `SEAL_GATEWAY_OPERATOR_JWT_ISSUER` (default: `aegis-keycloak`)
-- `SEAL_GATEWAY_OPERATOR_JWT_AUDIENCE` (default: `aegis-seal-gateway`)
+- `SEAL_GATEWAY_OPERATOR_JWT_ISSUER` (required) — the issuer an operator JWT's
+  `iss` must equal exactly (for Keycloak, the realm URL, e.g.
+  `https://auth.example.com/realms/aegis`)
+- `SEAL_GATEWAY_OPERATOR_JWT_AUDIENCE` (required) — the audience an operator
+  JWT's `aud` must name exactly
 - `SEAL_GATEWAY_SEAL_JWT_PUBLIC_KEY_PEM` (required)
-- `SEAL_GATEWAY_SEAL_JWT_ISSUER` (default: `aegis-orchestrator`)
-- `SEAL_GATEWAY_SEAL_JWT_AUDIENCE` (default: `aegis-agents`)
+- `SEAL_GATEWAY_SEAL_JWT_ISSUER` (required) — the issuer a SEAL security
+  token's `iss` must equal exactly
+- `SEAL_GATEWAY_SEAL_JWT_AUDIENCE` (required) — the audience a SEAL security
+  token's `aud` must name exactly
 - `SEAL_GATEWAY_AUTH_DISABLED` (default: `false`)
 - `SEAL_GATEWAY_OPENBAO_ADDR`
   (required for `SystemJit`/`StaticRef` credential paths)

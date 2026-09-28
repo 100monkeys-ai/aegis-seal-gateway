@@ -1,13 +1,14 @@
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{decode, DecodingKey};
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::domain::{SealEnvelope, SealToolCall, SealToolParams};
 use crate::infrastructure::errors::GatewayError;
 use crate::infrastructure::metrics::record_signature_failure;
+use crate::infrastructure::token_validation::rs256_validation;
 
 #[derive(Debug, Clone, Deserialize)]
 struct SealClaims {
@@ -87,17 +88,19 @@ pub fn verify_and_extract(
         ));
     }
 
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.validate_exp = true;
-    validation.set_issuer(&[seal_jwt_issuer]);
-    validation.set_audience(&[seal_jwt_audience]);
+    let validation = rs256_validation(seal_jwt_issuer, seal_jwt_audience);
     let claims = decode::<SealClaims>(
         &envelope.security_token,
         &DecodingKey::from_rsa_pem(seal_jwt_public_key_pem.as_bytes())
             .map_err(|e| GatewayError::Seal(format!("invalid SEAL JWT public key: {e}")))?,
         &validation,
     )
-    .map_err(|e| GatewayError::Seal(format!("security token invalid: {e}")))?
+    .map_err(|e| {
+        // The log names the failed check; the caller learns only that the
+        // token was refused.
+        tracing::warn!(reason = %e, "SEAL security token refused");
+        GatewayError::Seal("security token invalid".to_string())
+    })?
     .claims;
 
     // wid is REQUIRED per spec §4.2.2 and must be non-empty (presence is enforced by
@@ -162,4 +165,93 @@ fn canonical_message(
     });
     serde_json::to_vec(&canonical)
         .map_err(|e| GatewayError::Seal(format!("failed to serialize canonical SEAL message: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::test_tokens::{
+        assert_claim_matrix, now, sign_rs256, trusted_key, ACCEPTED_AUDIENCE, TRUSTED_ISSUER,
+    };
+    use ed25519_dalek::{Signer, SigningKey};
+
+    /// A SEAL claim set valid in every respect for a gateway that trusts
+    /// [`TRUSTED_ISSUER`] and accepts [`ACCEPTED_AUDIENCE`].
+    fn valid_seal_claims() -> Value {
+        serde_json::json!({
+            "iss": TRUSTED_ISSUER,
+            "aud": ACCEPTED_AUDIENCE,
+            "exp": now() + 3600,
+            "iat": now(),
+            "jti": uuid::Uuid::new_v4().to_string(),
+            "sub": "agent-1",
+            "exec_id": "exec-1",
+            "scp": "aegis-system-default",
+            "wid": "container-1",
+            "tenant_id": "tenant-a",
+        })
+    }
+
+    /// An envelope carrying `security_token`, signed by a fresh Ed25519 key.
+    /// Returns the envelope and that key's public half, base64.
+    fn signed_envelope(security_token: String) -> (SealEnvelope, String) {
+        let mut seed = [0u8; 32];
+        seed[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        seed[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        let signing_key = SigningKey::from_bytes(&seed);
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "req-1",
+            "method": "tools/call",
+            "params": { "name": "echo", "arguments": {} },
+        });
+        let timestamp = DateTime::from_timestamp(Utc::now().timestamp(), 0).expect("timestamp");
+        let message =
+            canonical_message(&security_token, &payload, timestamp).expect("canonical message");
+        let signature = signing_key.sign(&message);
+        let envelope = SealEnvelope {
+            protocol: "seal/v1".to_string(),
+            security_token,
+            signature: base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
+            payload,
+            container_id: None,
+            timestamp,
+        };
+        let public_key_b64 = base64::engine::general_purpose::STANDARD
+            .encode(signing_key.verifying_key().to_bytes());
+        (envelope, public_key_b64)
+    }
+
+    fn verify(security_token: String) -> Result<SealVerifiedCall, GatewayError> {
+        let (envelope, public_key_b64) = signed_envelope(security_token);
+        verify_and_extract(
+            &envelope,
+            &public_key_b64,
+            &trusted_key().public_pem,
+            TRUSTED_ISSUER,
+            ACCEPTED_AUDIENCE,
+        )
+    }
+
+    #[tokio::test]
+    async fn seal_path_requires_and_validates_exp_iss_aud() {
+        assert_claim_matrix("SEAL path", valid_seal_claims(), |token| async move {
+            verify(token).is_ok()
+        })
+        .await;
+    }
+
+    #[test]
+    fn seal_path_refusal_does_not_name_the_failed_check() {
+        let mut claims = valid_seal_claims();
+        claims["aud"] = serde_json::json!("aegis-orchestrator");
+        let refusal = verify(sign_rs256(trusted_key(), &claims))
+            .err()
+            .expect("a token for another audience must be refused");
+        assert_eq!(
+            refusal.to_string(),
+            "seal error: security token invalid",
+            "the caller learns the token was refused, not which check refused it"
+        );
+    }
 }

@@ -58,15 +58,23 @@ pub struct GatewayAuthConfig {
     pub operator_jwks_uri: String,
     #[serde(default = "default_jwks_cache_ttl_secs")]
     pub jwks_cache_ttl_secs: u64,
-    #[serde(default = "default_operator_jwt_issuer")]
+    /// The one issuer whose operator tokens are trusted, compared as an exact
+    /// string. Required: the gateway refuses to start without it.
+    #[serde(default)]
     pub operator_jwt_issuer: String,
-    #[serde(default = "default_operator_jwt_audience")]
+    /// The audience an operator token must name, compared as an exact string.
+    /// Required: the gateway refuses to start without it.
+    #[serde(default)]
     pub operator_jwt_audience: String,
     #[serde(default)]
     pub seal_jwt_public_key_pem: String,
-    #[serde(default = "default_seal_jwt_issuer")]
+    /// The one issuer whose SEAL security tokens are trusted, compared as an
+    /// exact string. Required: the gateway refuses to start without it.
+    #[serde(default)]
     pub seal_jwt_issuer: String,
-    #[serde(default = "default_seal_jwt_audience")]
+    /// The audience a SEAL security token must name, compared as an exact
+    /// string. Required: the gateway refuses to start without it.
+    #[serde(default)]
     pub seal_jwt_audience: String,
     /// Deployment-defined JWT claim name carrying the operator role (ADR-088 S6).
     /// Defaults to "aegis_role" if absent.
@@ -151,11 +159,11 @@ impl Default for GatewayAuthConfig {
             disabled: false,
             operator_jwks_uri: String::new(),
             jwks_cache_ttl_secs: default_jwks_cache_ttl_secs(),
-            operator_jwt_issuer: default_operator_jwt_issuer(),
-            operator_jwt_audience: default_operator_jwt_audience(),
+            operator_jwt_issuer: String::new(),
+            operator_jwt_audience: String::new(),
             seal_jwt_public_key_pem: String::new(),
-            seal_jwt_issuer: default_seal_jwt_issuer(),
-            seal_jwt_audience: default_seal_jwt_audience(),
+            seal_jwt_issuer: String::new(),
+            seal_jwt_audience: String::new(),
             operator_role_claim: None,
         }
     }
@@ -417,6 +425,37 @@ impl SealGatewayConfigManifest {
         if !self.spec.auth.disabled && self.spec.auth.operator_jwks_uri.trim().is_empty() {
             anyhow::bail!("spec.auth.operator_jwks_uri is required when auth is enabled");
         }
+        // Fail closed: a path with no trusted issuer or no accepted audience
+        // would have nothing to compare a token's `iss` or `aud` against.
+        let auth = &self.spec.auth;
+        for (key, env, value) in [
+            (
+                "operator_jwt_issuer",
+                "SEAL_GATEWAY_OPERATOR_JWT_ISSUER",
+                &auth.operator_jwt_issuer,
+            ),
+            (
+                "operator_jwt_audience",
+                "SEAL_GATEWAY_OPERATOR_JWT_AUDIENCE",
+                &auth.operator_jwt_audience,
+            ),
+            (
+                "seal_jwt_issuer",
+                "SEAL_GATEWAY_SEAL_JWT_ISSUER",
+                &auth.seal_jwt_issuer,
+            ),
+            (
+                "seal_jwt_audience",
+                "SEAL_GATEWAY_SEAL_JWT_AUDIENCE",
+                &auth.seal_jwt_audience,
+            ),
+        ] {
+            if value.trim().is_empty() {
+                anyhow::bail!(
+                    "spec.auth.{key} (or {env}) is required: the gateway accepts a token only when its claim matches this value exactly"
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -429,18 +468,6 @@ fn default_grpc_bind_addr() -> String {
 }
 fn default_database_url() -> String {
     "sqlite://gateway.db".to_string()
-}
-fn default_operator_jwt_issuer() -> String {
-    "aegis-keycloak".to_string()
-}
-fn default_operator_jwt_audience() -> String {
-    "aegis-seal-gateway".to_string()
-}
-fn default_seal_jwt_issuer() -> String {
-    "aegis-orchestrator".to_string()
-}
-fn default_seal_jwt_audience() -> String {
-    "aegis-agents".to_string()
 }
 fn default_jwks_cache_ttl_secs() -> u64 {
     300
@@ -539,5 +566,61 @@ spec:
             serde_yaml::from_str(yaml).expect("parse manifest");
         assert_eq!(manifest.kind, "SealGatewayConfig");
         assert_eq!(manifest.metadata.name, "test-gateway");
+    }
+
+    const TOKEN_CLAIM_KEYS: [&str; 4] = [
+        "operator_jwt_issuer",
+        "operator_jwt_audience",
+        "seal_jwt_issuer",
+        "seal_jwt_audience",
+    ];
+
+    /// A manifest with operator authentication on and every token claim key
+    /// set, except `omit`.
+    fn manifest_without(omit: &str) -> SealGatewayConfigManifest {
+        let mut auth = String::from(
+            "    disabled: false\n    operator_jwks_uri: \"https://auth.example.test/realms/aegis-system/protocol/openid-connect/certs\"\n",
+        );
+        for key in TOKEN_CLAIM_KEYS {
+            if key != omit {
+                auth.push_str(&format!("    {key}: \"value-for-{key}\"\n"));
+            }
+        }
+        let yaml = format!(
+            "apiVersion: seal.100monkeys.ai/v1\nkind: SealGatewayConfig\nmetadata:\n  name: test-gateway\nspec:\n  auth:\n{auth}"
+        );
+        serde_yaml::from_str(&yaml).expect("parse manifest")
+    }
+
+    // Security audit 005, fail closed on configuration: a gateway that has not
+    // been told which issuer it trusts and which audience it accepts, on either
+    // path, refuses to start instead of starting with that check off.
+    #[test]
+    fn refuses_to_start_without_a_trusted_issuer_or_accepted_audience() {
+        assert!(
+            manifest_without("none").validate().is_ok(),
+            "a manifest with every key set must start"
+        );
+        let mut started_anyway = Vec::new();
+        for key in TOKEN_CLAIM_KEYS {
+            match manifest_without(key).validate() {
+                Ok(()) => started_anyway.push(key),
+                Err(error) => assert!(
+                    error.to_string().contains(&format!("spec.auth.{key}")),
+                    "the refusal must name the missing key {key}: {error}"
+                ),
+            }
+        }
+        assert!(
+            started_anyway.is_empty(),
+            "the gateway starts with no value for {started_anyway:?}"
+        );
+    }
+
+    #[test]
+    fn refuses_to_start_with_a_blank_trusted_issuer() {
+        let mut manifest = manifest_without("none");
+        manifest.spec.auth.seal_jwt_issuer = "   ".to_string();
+        assert!(manifest.validate().is_err());
     }
 }

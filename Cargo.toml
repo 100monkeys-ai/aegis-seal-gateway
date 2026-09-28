@@ -60,3 +60,5 @@ protoc-bin-vendored = "3.0"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+# Generates the RSA keys the token tests sign with (src/infrastructure/test_tokens.rs).
+aws-lc-rs = "1.18"

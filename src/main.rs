@@ -60,6 +60,72 @@ async fn main() -> anyhow::Result<()> {
     init_metrics()?;
 
     let config = GatewayConfig::load_or_default()?;
+    let (state, jti_repo) = build_state(config.clone()).await?;
+    let seal_sessions = state.seal_sessions.clone();
+
+    if std::env::var("SEAL_GATEWAY_BOOTSTRAP_SESSION").is_ok() {
+        seal_sessions
+            .save(SealSessionRecord {
+                execution_id: "dev-execution".to_string(),
+                agent_id: "dev-agent".to_string(),
+                security_context: "aegis-system-default".to_string(),
+                public_key_b64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string(),
+                security_token: "dev".to_string(),
+                session_status: domain::SealSessionStatus::Active,
+                expires_at: Utc::now() + Duration::hours(1),
+                allowed_tool_patterns: vec!["*".to_string()],
+                tenant_id: None,
+            })
+            .await?;
+    }
+
+    // Periodic refresh of the active SEAL session gauge.
+    spawn_session_gauge_task(seal_sessions.clone());
+
+    // Periodic JTI cleanup — purge expired entries every 30 seconds.
+    {
+        let jti_cleanup = jti_repo.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                if let Err(e) = jti_cleanup.cleanup_expired().await {
+                    tracing::warn!("JTI cleanup failed: {e}");
+                }
+            }
+        });
+    }
+
+    let app = build_http_router(state.clone());
+
+    let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
+    tracing::info!("aegis-seal-gateway listening on {}", config.bind_addr);
+
+    let grpc_addr: std::net::SocketAddr = config.grpc_bind_addr.parse()?;
+    let grpc_service = GatewayGrpcService::new(state);
+    tracing::info!(
+        "aegis-seal-gateway gRPC listening on {}",
+        config.grpc_bind_addr
+    );
+
+    let (http_result, grpc_result) = tokio::join!(
+        axum::serve(listener, app),
+        tonic::transport::Server::builder()
+            .layer(GrpcMetricsLayer)
+            .add_service(ToolWorkflowServiceServer::new(grpc_service.clone()))
+            .add_service(GatewayInvocationServiceServer::new(grpc_service))
+            .serve(grpc_addr),
+    );
+    http_result?;
+    grpc_result?;
+
+    Ok(())
+}
+
+/// Build every repository, engine and service the gateway serves from, as
+/// `config` describes them. Returns the application state and the JTI
+/// repository, whose cleanup task `main` owns.
+async fn build_state(config: GatewayConfig) -> anyhow::Result<(AppState, Arc<dyn JtiRepository>)> {
     let mut credential_pg_pool: Option<sqlx::PgPool> = None;
     let (specs, workflows, cli_tools, seal_sessions, security_contexts, jti_repo, event_store): RepositoryBundle =
         if config.database_url.starts_with("postgres://")
@@ -97,39 +163,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    if std::env::var("SEAL_GATEWAY_BOOTSTRAP_SESSION").is_ok() {
-        seal_sessions
-            .save(SealSessionRecord {
-                execution_id: "dev-execution".to_string(),
-                agent_id: "dev-agent".to_string(),
-                security_context: "aegis-system-default".to_string(),
-                public_key_b64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string(),
-                security_token: "dev".to_string(),
-                session_status: domain::SealSessionStatus::Active,
-                expires_at: Utc::now() + Duration::hours(1),
-                allowed_tool_patterns: vec!["*".to_string()],
-                tenant_id: None,
-            })
-            .await?;
-    }
-
-    // Periodic refresh of the active SEAL session gauge.
-    spawn_session_gauge_task(seal_sessions.clone());
-
-    // Periodic JTI cleanup — purge expired entries every 30 seconds.
-    {
-        let jti_cleanup = jti_repo.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
-            loop {
-                interval.tick().await;
-                if let Err(e) = jti_cleanup.cleanup_expired().await {
-                    tracing::warn!("JTI cleanup failed: {e}");
-                }
-            }
-        });
-    }
-
     let http_client = HttpClient::new()?;
     let credential_resolver = CredentialResolver::new(config.clone(), credential_pg_pool);
     let semantic_gate = SemanticGate::new(config.semantic_judge_url.clone());
@@ -165,24 +198,36 @@ async fn main() -> anyhow::Result<()> {
         cli_tools.clone(),
         seal_sessions.clone(),
         security_contexts.clone(),
-        jti_repo,
+        jti_repo.clone(),
         event_store.clone(),
         config.clone(),
     );
 
     let state = AppState {
-        config: config.clone(),
+        config,
         specs,
         workflows,
         cli_tools,
-        seal_sessions: seal_sessions.clone(),
-        security_contexts: security_contexts.clone(),
+        seal_sessions,
+        security_contexts,
         audit_store: event_store,
         invocation_service: invocation,
         explorer_service: explorer,
     };
+    Ok((state, jti_repo))
+}
 
-    let operator_routes = Router::new()
+/// The HTTP surface. Every route requires an operator token except the paths
+/// `infrastructure::auth::is_public_path` names; a route added here is behind
+/// the operator check unless it is added to that list as well.
+fn build_http_router(state: AppState) -> Router {
+    let seal_invoke_routes = Router::new()
+        .route("/v1/invoke", post(invoke_seal))
+        .route("/v1/seal/invoke", post(invoke_seal))
+        .layer(middleware::from_fn(inject_seal_tenant_context));
+
+    let mut app = Router::new()
+        .merge(SwaggerUi::new("/api-docs").url("/openapi.json", openapi_spec()))
         .route("/v1/specs", post(register_spec).get(list_specs))
         .route("/v1/specs/{id}", get(get_spec).delete(delete_spec))
         .route("/v1/workflows", post(register_workflow).get(list_workflows))
@@ -209,55 +254,27 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/security-contexts/{name}", get(get_security_context))
         .route("/v1/tools", get(list_tools))
         .route("/v1/explorer", post(explore_api))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            require_operator,
-        ));
-
-    let seal_invoke_routes = Router::new()
-        .route("/v1/invoke", post(invoke_seal))
-        .route("/v1/seal/invoke", post(invoke_seal))
-        .layer(middleware::from_fn(inject_seal_tenant_context));
-
-    let mut app = Router::new()
-        .merge(SwaggerUi::new("/api-docs").url("/openapi.json", openapi_spec()))
-        .merge(operator_routes)
         .merge(seal_invoke_routes)
-        .route("/health", get(|| async { "ok" }))
-        .with_state(state.clone());
-    if config.ui_enabled {
+        .route("/health", get(|| async { "ok" }));
+    if state.config.ui_enabled {
         app = app
             .route("/", get(ui::index))
             .route("/ui/app.js", get(ui::app_js))
             .route("/ui/styles.css", get(ui::styles_css));
     }
 
+    // Default deny: the operator check wraps every route above, and the
+    // fallback, and lets through only the public paths.
+    let app = app
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_operator,
+        ))
+        .with_state(state);
+
     // HTTP metrics middleware is applied last so `MatchedPath` is populated
     // for every route by the time the middleware runs (ADR-058 §HTTP labels).
-    let app = app.layer(middleware::from_fn(http_metrics_middleware));
-
-    let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
-    tracing::info!("aegis-seal-gateway listening on {}", config.bind_addr);
-
-    let grpc_addr: std::net::SocketAddr = config.grpc_bind_addr.parse()?;
-    let grpc_service = GatewayGrpcService::new(state);
-    tracing::info!(
-        "aegis-seal-gateway gRPC listening on {}",
-        config.grpc_bind_addr
-    );
-
-    let (http_result, grpc_result) = tokio::join!(
-        axum::serve(listener, app),
-        tonic::transport::Server::builder()
-            .layer(GrpcMetricsLayer)
-            .add_service(ToolWorkflowServiceServer::new(grpc_service.clone()))
-            .add_service(GatewayInvocationServiceServer::new(grpc_service))
-            .serve(grpc_addr),
-    );
-    http_result?;
-    grpc_result?;
-
-    Ok(())
+    app.layer(middleware::from_fn(http_metrics_middleware))
 }
 
 #[utoipa::path(
@@ -331,4 +348,296 @@ async fn update_workflow(
         .await
         .map_err(error_response)?;
     Ok(axum::Json(serde_json::json!({"updated": true})))
+}
+
+#[cfg(test)]
+mod operator_plane_tests {
+    //! The operator plane refuses every caller but an operator, on every route
+    //! and every RPC. Routes are enumerated from the OpenAPI document the
+    //! router serves, RPCs from the service definition the gRPC server is
+    //! generated from, so a new one is covered the moment it exists.
+
+    use super::*;
+    use crate::infrastructure::test_tokens::{gateway_config_trusting_test_keys, OperatorCaller};
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn test_state() -> (AppState, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("gw-op-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let url = format!("sqlite://{}", dir.join("gateway.db").display());
+        let (state, _jti) = build_state(gateway_config_trusting_test_keys(&url))
+            .await
+            .expect("build state");
+        (state, dir)
+    }
+
+    /// Every (method, path) the OpenAPI document declares, with path
+    /// parameters filled in.
+    fn documented_operations() -> Vec<(Method, String)> {
+        let spec = openapi_spec();
+        let mut operations = Vec::new();
+        for (path, item) in &spec.paths.paths {
+            let concrete = path
+                .split('/')
+                .map(|segment| {
+                    if segment.starts_with('{') {
+                        uuid::Uuid::new_v4().to_string()
+                    } else {
+                        segment.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            for (method, present) in [
+                (Method::GET, item.get.is_some()),
+                (Method::POST, item.post.is_some()),
+                (Method::PUT, item.put.is_some()),
+                (Method::DELETE, item.delete.is_some()),
+                (Method::PATCH, item.patch.is_some()),
+            ] {
+                if present {
+                    operations.push((method, concrete.clone()));
+                }
+            }
+        }
+        operations
+    }
+
+    async fn status_of(
+        app: &Router,
+        method: Method,
+        path: &str,
+        caller: &OperatorCaller,
+    ) -> StatusCode {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json");
+        if let Some(value) = caller.authorization() {
+            request = request.header("authorization", value);
+        }
+        let request = request.body(Body::from("{}")).expect("request");
+        app.clone()
+            .oneshot(request)
+            .await
+            .expect("oneshot")
+            .status()
+    }
+
+    #[tokio::test]
+    async fn every_operator_route_refuses_all_but_an_operator() {
+        let (state, dir) = test_state().await;
+        let app = build_http_router(state);
+        let operations = documented_operations();
+        assert!(
+            operations.len() >= 20,
+            "the OpenAPI document lists {} operations; the router serves at least 20",
+            operations.len()
+        );
+        let mut wrong = Vec::new();
+        for (method, path) in &operations {
+            if crate::infrastructure::auth::is_public_path(path) {
+                continue;
+            }
+            for caller in &OperatorCaller::ALL {
+                let status = status_of(&app, method.clone(), path, caller).await;
+                let refused = status == StatusCode::UNAUTHORIZED;
+                let authorized =
+                    status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN;
+                let right = if caller.must_be_accepted() {
+                    authorized
+                } else {
+                    refused
+                };
+                if !right {
+                    wrong.push(format!("{method} {path} with {}: {status}", caller.name()));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(
+            wrong.is_empty(),
+            "operator routes answered wrongly:\n{}",
+            wrong.join("\n")
+        );
+    }
+
+    // A path nobody documented is refused before it is routed, so a route
+    // added to the router without an entry in the public list is behind the
+    // operator check by construction.
+    #[tokio::test]
+    async fn an_undocumented_path_is_refused_without_an_operator_token() {
+        let (state, dir) = test_state().await;
+        let app = build_http_router(state);
+        let status = status_of(
+            &app,
+            Method::GET,
+            "/v1/not-a-route",
+            &OperatorCaller::NoToken,
+        )
+        .await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn health_is_served_without_a_token() {
+        let (state, dir) = test_state().await;
+        let app = build_http_router(state);
+        let status = status_of(&app, Method::GET, "/health", &OperatorCaller::NoToken).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    /// The RPC names the service definition declares, read from the same
+    /// `.proto` file `build.rs` compiles.
+    fn declared_rpcs() -> Vec<String> {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let candidates = [
+            manifest.join("../aegis-proto/proto/seal_gateway.proto"),
+            manifest.join("proto-vendor/aegis/seal_gateway.proto"),
+        ];
+        let proto = candidates
+            .iter()
+            .find(|p| p.exists())
+            .map(|p| std::fs::read_to_string(p).expect("read proto"))
+            .expect("seal_gateway.proto next to the build");
+        proto
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("rpc "))
+            .map(|rest| {
+                rest.split('(')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    async fn call_rpc(
+        service: &GatewayGrpcService,
+        rpc: &str,
+        caller: &OperatorCaller,
+    ) -> Option<Result<(), tonic::Status>> {
+        use presentation::grpc::proto;
+        use presentation::grpc::proto::gateway_invocation_service_server::GatewayInvocationService;
+        use presentation::grpc::proto::tool_workflow_service_server::ToolWorkflowService;
+        fn request<T>(message: T, caller: &OperatorCaller) -> tonic::Request<T> {
+            let mut request = tonic::Request::new(message);
+            if let Some(value) = caller.authorization() {
+                request
+                    .metadata_mut()
+                    .insert("authorization", value.parse().expect("metadata"));
+            }
+            request
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        Some(match rpc {
+            "CreateWorkflow" => service
+                .create_workflow(request(proto::CreateWorkflowRequest::default(), caller))
+                .await
+                .map(|_| ()),
+            "GetWorkflow" => service
+                .get_workflow(request(
+                    proto::GetWorkflowRequest { workflow_id: id },
+                    caller,
+                ))
+                .await
+                .map(|_| ()),
+            "ListWorkflows" => service
+                .list_workflows(request(proto::ListWorkflowsRequest::default(), caller))
+                .await
+                .map(|_| ()),
+            "UpdateWorkflow" => service
+                .update_workflow(request(proto::UpdateWorkflowRequest::default(), caller))
+                .await
+                .map(|_| ()),
+            "DeleteWorkflow" => service
+                .delete_workflow(request(
+                    proto::DeleteWorkflowRequest { workflow_id: id },
+                    caller,
+                ))
+                .await
+                .map(|_| ()),
+            "InvokeWorkflow" => service
+                .invoke_workflow(request(
+                    proto::InvokeWorkflowRequest {
+                        execution_id: id,
+                        workflow_name: "not-a-workflow".to_string(),
+                        input_json: "{}".to_string(),
+                        ..Default::default()
+                    },
+                    caller,
+                ))
+                .await
+                .map(|_| ()),
+            "InvokeCli" => service
+                .invoke_cli(request(
+                    proto::InvokeCliRequest {
+                        execution_id: id,
+                        tool_name: "not-a-tool".to_string(),
+                        ..Default::default()
+                    },
+                    caller,
+                ))
+                .await
+                .map(|_| ()),
+            "ExploreApi" => service
+                .explore_api(request(
+                    proto::ExploreApiRequest {
+                        api_spec_id: id,
+                        parameters_json: "{}".to_string(),
+                        ..Default::default()
+                    },
+                    caller,
+                ))
+                .await
+                .map(|_| ()),
+            "ListTools" => service
+                .list_tools(request(proto::ListToolsRequest::default(), caller))
+                .await
+                .map(|_| ()),
+            _ => return None,
+        })
+    }
+
+    #[tokio::test]
+    async fn every_rpc_refuses_all_but_an_operator() {
+        let (state, dir) = test_state().await;
+        let service = GatewayGrpcService::new(state);
+        let rpcs = declared_rpcs();
+        assert!(rpcs.len() >= 9, "the service definition declares {rpcs:?}");
+        let mut wrong = Vec::new();
+        for rpc in &rpcs {
+            for caller in &OperatorCaller::ALL {
+                let Some(result) = call_rpc(&service, rpc, caller).await else {
+                    wrong.push(format!("{rpc}: no case in this test; add one"));
+                    break;
+                };
+                let code = result.err().map(|s| s.code());
+                let refused = code == Some(tonic::Code::Unauthenticated);
+                let authorized = !matches!(
+                    code,
+                    Some(tonic::Code::Unauthenticated) | Some(tonic::Code::PermissionDenied)
+                );
+                let right = if caller.must_be_accepted() {
+                    authorized
+                } else {
+                    refused
+                };
+                if !right {
+                    wrong.push(format!("{rpc} with {}: {code:?}", caller.name()));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(
+            wrong.is_empty(),
+            "RPCs answered wrongly:\n{}",
+            wrong.join("\n")
+        );
+    }
 }

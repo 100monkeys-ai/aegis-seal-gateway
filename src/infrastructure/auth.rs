@@ -10,11 +10,37 @@ use base64::Engine;
 use crate::infrastructure::config::GatewayConfig;
 use crate::presentation::state::AppState;
 
+/// Paths served without an operator token. Everything else the HTTP router
+/// serves, including a path it does not know, requires one.
+///
+/// - `/health`: liveness.
+/// - `/v1/invoke`, `/v1/seal/invoke`: the agent path, authenticated by the SEAL
+///   envelope's signature and its security token instead.
+/// - `/`, `/ui/*`, `/api-docs/*`, `/openapi.json`: the static operator console
+///   and the API description, which carry no data; every call they make is to
+///   an operator route.
+pub fn is_public_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/health"
+            | "/v1/invoke"
+            | "/v1/seal/invoke"
+            | "/"
+            | "/ui/app.js"
+            | "/ui/styles.css"
+            | "/openapi.json"
+    ) || path == "/api-docs"
+        || path.starts_with("/api-docs/")
+}
+
 pub async fn require_operator(
     State(app_state): State<AppState>,
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    if is_public_path(request.uri().path()) {
+        return Ok(next.run(request).await);
+    }
     if app_state.config.auth_disabled {
         let mut request = request;
         request

@@ -346,3 +346,97 @@ where
         wrong.join("\n")
     );
 }
+
+/// A gateway configuration with operator authentication on, trusting the test
+/// JWKS, [`TRUSTED_ISSUER`] and [`ACCEPTED_AUDIENCE`] on both paths, on
+/// `database_url`.
+pub fn gateway_config_trusting_test_keys(
+    database_url: &str,
+) -> crate::infrastructure::config::GatewayConfig {
+    crate::infrastructure::config::GatewayConfig {
+        bind_addr: "127.0.0.1:0".to_string(),
+        grpc_bind_addr: "127.0.0.1:0".to_string(),
+        database_url: database_url.to_string(),
+        jwks_validator: std::sync::Arc::new(
+            crate::infrastructure::jwks_validator::JwksValidator::with_cached_jwks(trusted_jwks()),
+        ),
+        operator_jwt_issuer: TRUSTED_ISSUER.to_string(),
+        operator_jwt_audience: ACCEPTED_AUDIENCE.to_string(),
+        auth_disabled: false,
+        operator_role_claim: "aegis_role".to_string(),
+        seal_jwt_public_key_pem: trusted_key().public_pem.clone(),
+        seal_jwt_issuer: TRUSTED_ISSUER.to_string(),
+        seal_jwt_audience: ACCEPTED_AUDIENCE.to_string(),
+        openbao_addr: None,
+        openbao_token: None,
+        openbao_kv_mount: "secret".to_string(),
+        keycloak_token_exchange_url: None,
+        keycloak_client_id: None,
+        keycloak_client_secret: None,
+        semantic_judge_url: None,
+        ui_enabled: true,
+        container_cli: "podman".to_string(),
+        nfs_server_host: "127.0.0.1".to_string(),
+        nfs_port: 2049,
+        nfs_mount_port: 20048,
+        orchestrator_url: None,
+    }
+}
+
+/// The operator credentials a caller presents, one per refusal the operator
+/// plane must make, plus the one it must accept.
+pub enum OperatorCaller {
+    NoToken,
+    OtherAudience,
+    OtherIssuer,
+    /// A token shaped as Keycloak mints it for the orchestrator's service
+    /// account: the gateway's audience, the trusted issuer, the operator role.
+    Orchestrator,
+}
+
+impl OperatorCaller {
+    pub const ALL: [OperatorCaller; 4] = [
+        OperatorCaller::NoToken,
+        OperatorCaller::OtherAudience,
+        OperatorCaller::OtherIssuer,
+        OperatorCaller::Orchestrator,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            OperatorCaller::NoToken => "no token",
+            OperatorCaller::OtherAudience => "a token for another audience",
+            OperatorCaller::OtherIssuer => "a token from another issuer",
+            OperatorCaller::Orchestrator => "the orchestrator's token",
+        }
+    }
+
+    pub fn must_be_accepted(&self) -> bool {
+        matches!(self, OperatorCaller::Orchestrator)
+    }
+
+    /// The `Authorization` header value, if any.
+    pub fn authorization(&self) -> Option<String> {
+        let mut claims = serde_json::json!({
+            "iss": TRUSTED_ISSUER,
+            "aud": ACCEPTED_AUDIENCE,
+            "exp": now() + 3600,
+            "iat": now(),
+            "sub": "service-account-user-id",
+            "azp": "aegis-orchestrator",
+            "preferred_username": "service-account-aegis-orchestrator",
+            "aegis_role": "aegis:operator",
+        });
+        match self {
+            OperatorCaller::NoToken => return None,
+            OperatorCaller::OtherAudience => {
+                claims["aud"] = serde_json::json!("aegis-orchestrator")
+            }
+            OperatorCaller::OtherIssuer => {
+                claims["iss"] = serde_json::json!("https://auth.example.test/realms/zaru-consumer")
+            }
+            OperatorCaller::Orchestrator => {}
+        }
+        Some(format!("Bearer {}", sign_rs256(trusted_key(), &claims)))
+    }
+}

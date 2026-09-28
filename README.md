@@ -52,6 +52,19 @@ Discovery order:
 
 Environment variables are supported as runtime overrides (same names as before).
 
+### Authentication
+
+Every HTTP route requires an operator JWT (`Authorization: Bearer …`) except
+`/health`, the agent paths `/v1/invoke` and `/v1/seal/invoke` (authenticated by
+the SEAL envelope instead), and the static console and API description (`/`,
+`/ui/*`, `/api-docs/*`, `/openapi.json`). A route that is not on that list,
+including one added later, requires an operator token. Every gRPC method of
+`ToolWorkflowService` and `GatewayInvocationService` requires the same token in
+the `authorization` metadata. An operator token is accepted when it is RS256-signed
+by a key the JWKS URI publishes, its `iss` equals the configured issuer, its
+`aud` names the configured audience, and its role claim is `aegis:operator` or
+`aegis:admin`.
+
 ### YAML Example
 
 ```yaml

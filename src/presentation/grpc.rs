@@ -213,6 +213,8 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         &self,
         request: Request<proto::InvokeWorkflowRequest>,
     ) -> Result<Response<proto::InvokeWorkflowResponse>, Status> {
+        // Invocation runs tools with the gateway's credentials: operator only.
+        self.require_operator_metadata(request.metadata()).await?;
         let req = request.into_inner();
         let input: Value = serde_json::from_str(&req.input_json)
             .map_err(|e| Status::invalid_argument(format!("invalid input_json: {e}")))?;
@@ -243,6 +245,8 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         &self,
         request: Request<proto::InvokeCliRequest>,
     ) -> Result<Response<proto::InvokeCliResponse>, Status> {
+        // Invocation runs tools with the gateway's credentials: operator only.
+        self.require_operator_metadata(request.metadata()).await?;
         let req = request.into_inner();
         let fsal_mounts = req
             .fsal_mounts

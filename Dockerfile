@@ -8,7 +8,7 @@ WORKDIR /workspace
 COPY aegis-seal-gateway/ ./aegis-seal-gateway/
 COPY aegis-proto/ ./aegis-proto/
 WORKDIR /workspace/aegis-seal-gateway
-RUN cargo build --release
+RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -30,6 +30,9 @@ pub struct GatewayConfig {
     /// Base URL of the aegis-orchestrator REST API (e.g. `http://orchestrator:8080`).
     /// Required for native tools that proxy volume/file operations.
     pub orchestrator_url: Option<String>,
+    /// The gRPC listener's TLS certificate and key, by path (AEGIS ADR-132
+    /// H8); `None` serves plaintext.
+    pub grpc_tls: Option<crate::domain::GatewayGrpcTlsConfig>,
 }
 
 impl GatewayConfig {
@@ -103,6 +106,7 @@ impl GatewayConfig {
                 .cli
                 .orchestrator_url
                 .filter(|value| !value.trim().is_empty()),
+            grpc_tls: manifest.spec.network.grpc_tls,
         })
     }
 

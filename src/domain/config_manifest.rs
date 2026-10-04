@@ -42,6 +42,18 @@ pub struct GatewayNetworkConfig {
     pub bind_addr: String,
     #[serde(default = "default_grpc_bind_addr")]
     pub grpc_bind_addr: String,
+    /// The gRPC listener's certificate and key (AEGIS ADR-132 H8). When set,
+    /// gRPC is served over TLS; when absent it is plaintext, and a call that
+    /// carries a person's credential is refused there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grpc_tls: Option<GatewayGrpcTlsConfig>,
+}
+
+/// PEM files, by path, for the gRPC listener's TLS identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayGrpcTlsConfig {
+    pub cert_path: String,
+    pub key_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +153,7 @@ impl Default for GatewayNetworkConfig {
         Self {
             bind_addr: default_bind_addr(),
             grpc_bind_addr: default_grpc_bind_addr(),
+            grpc_tls: None,
         }
     }
 }
@@ -224,6 +237,10 @@ impl SealGatewayConfigManifest {
     pub fn resolve_env_refs(&mut self) {
         resolve_env_string(&mut self.spec.network.bind_addr);
         resolve_env_string(&mut self.spec.network.grpc_bind_addr);
+        if let Some(tls) = self.spec.network.grpc_tls.as_mut() {
+            resolve_env_string(&mut tls.cert_path);
+            resolve_env_string(&mut tls.key_path);
+        }
         resolve_env_string(&mut self.spec.database.url);
         resolve_env_string(&mut self.spec.auth.operator_jwks_uri);
         resolve_env_string(&mut self.spec.auth.operator_jwt_issuer);
@@ -615,6 +632,30 @@ spec:
             started_anyway.is_empty(),
             "the gateway starts with no value for {started_anyway:?}"
         );
+    }
+
+    #[test]
+    fn reads_the_grpc_listeners_tls_paths() {
+        let yaml = "apiVersion: seal.100monkeys.ai/v1\nkind: SealGatewayConfig\nmetadata:\n  name: g\nspec:\n  network:\n    grpc_tls:\n      cert_path: /etc/aegis/tls/seal-gateway.crt\n      key_path: env:GW_TEST_GRPC_TLS_KEY_PATH\n";
+        let mut manifest: SealGatewayConfigManifest =
+            serde_yaml::from_str(yaml).expect("parse manifest");
+        std::env::set_var(
+            "GW_TEST_GRPC_TLS_KEY_PATH",
+            "/etc/aegis/tls/seal-gateway.key",
+        );
+        manifest.resolve_env_refs();
+        assert_eq!(
+            manifest.spec.network.grpc_tls,
+            Some(GatewayGrpcTlsConfig {
+                cert_path: "/etc/aegis/tls/seal-gateway.crt".to_string(),
+                key_path: "/etc/aegis/tls/seal-gateway.key".to_string(),
+            })
+        );
+        let plain: SealGatewayConfigManifest = serde_yaml::from_str(
+            "apiVersion: seal.100monkeys.ai/v1\nkind: SealGatewayConfig\nmetadata:\n  name: g\nspec: {}\n",
+        )
+        .expect("parse manifest");
+        assert_eq!(plain.spec.network.grpc_tls, None);
     }
 
     #[test]

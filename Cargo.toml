@@ -47,7 +47,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2.5"
 uuid = { version = "1.15", features = ["v4", "serde"] }
 aegis_orchestrator_proto = { version = "0.15.0-pre-alpha", path = "../aegis-proto", package = "aegis-orchestrator-proto" }
-tonic = { version = "0.14", features = ["transport"] }
+tonic = { version = "0.14", features = ["transport", "tls-ring"] }
 prost = "0.14"
 prost-types = "0.14"
 tonic-prost = "0.14"
@@ -62,3 +62,5 @@ protoc-bin-vendored = "3.0"
 tower = { version = "0.5", features = ["util"] }
 # Generates the RSA keys the token tests sign with (src/infrastructure/test_tokens.rs).
 aws-lc-rs = "1.18"
+# Generates the throwaway certificate the gRPC TLS tests serve (src/main.rs).
+rcgen = "0.14"

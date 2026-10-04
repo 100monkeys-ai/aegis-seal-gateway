@@ -390,6 +390,7 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         request: Request<proto::InvokeToolRequest>,
     ) -> Result<Response<proto::InvokeToolResponse>, Status> {
         self.require_operator_metadata(request.metadata()).await?;
+        refuse_credential_on_plaintext(&request, request.get_ref().credential.is_some())?;
         let req = request.into_inner();
         let tool_name = format!("{}.{}", req.server, req.tool);
         self.record_invocation(
@@ -412,6 +413,14 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
     ) -> Result<Response<proto::ListToolsResponse>, Status> {
         let (tenant_id, _identity_kind) =
             self.require_operator_metadata(request.metadata()).await?;
+        refuse_credential_on_plaintext(
+            &request,
+            request
+                .get_ref()
+                .bound_servers
+                .iter()
+                .any(|bound| bound.credential.is_some()),
+        )?;
         let workflows = self
             .state
             .workflows
@@ -601,6 +610,35 @@ fn internal(err: crate::infrastructure::errors::GatewayError) -> Status {
     Status::internal(err.to_string())
 }
 
+/// A person's credential rides the call only over TLS (AEGIS ADR-132 H8): a
+/// request that carries one on a plaintext listener is refused, whatever else
+/// it asks. The connection itself says which it is: tonic attaches
+/// `TlsConnectInfo` only to a request that arrived over TLS. There is no
+/// setting that lets a credential through on plaintext.
+#[allow(clippy::result_large_err)]
+fn refuse_credential_on_plaintext<T>(
+    request: &Request<T>,
+    carries_credential: bool,
+) -> Result<(), Status> {
+    use tonic::transport::server::{TcpConnectInfo, TlsConnectInfo};
+    if !carries_credential
+        || request
+            .extensions()
+            .get::<TlsConnectInfo<TcpConnectInfo>>()
+            .is_some()
+    {
+        return Ok(());
+    }
+    tracing::error!(
+        "a call carrying a credential arrived on a plaintext gRPC listener and was refused; \
+         serve gRPC over TLS (spec.network.grpc_tls)"
+    );
+    Err(refusal_status(
+        RefusalCode::CredentialChannelNotConfidential,
+        "This tool is not available right now.",
+    ))
+}
+
 /// A refusal as the orchestrator relays it (AEGIS ADR-035 R1): the R5 code in
 /// the `seal-refusal-code` metadata, the caller-facing text as the message.
 fn refusal_status(code: RefusalCode, message: &str) -> Status {
@@ -644,6 +682,7 @@ mod tests {
             nfs_port: 2049,
             nfs_mount_port: 20048,
             orchestrator_url: None,
+            grpc_tls: None,
         }
     }
 

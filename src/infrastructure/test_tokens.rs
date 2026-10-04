@@ -380,6 +380,7 @@ pub fn gateway_config_trusting_test_keys(
         nfs_port: 2049,
         nfs_mount_port: 20048,
         orchestrator_url: None,
+        grpc_tls: None,
     }
 }
 

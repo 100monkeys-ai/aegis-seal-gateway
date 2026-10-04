@@ -168,6 +168,9 @@ pub enum GatewayError {
 pub enum RefusalCode {
     /// The call needs the acting user's own credential and carries none.
     CredentialBindingRequired,
+    /// The call carries a credential and the gRPC listener is plaintext
+    /// (AEGIS ADR-132 H8): a deployment fault, never the caller's.
+    CredentialChannelNotConfidential,
     NotFound,
 }
 
@@ -178,6 +181,7 @@ impl RefusalCode {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::CredentialBindingRequired => "CREDENTIAL_BINDING_REQUIRED",
+            Self::CredentialChannelNotConfidential => "CREDENTIAL_CHANNEL_NOT_CONFIDENTIAL",
             Self::NotFound => "NOT_FOUND",
         }
     }
@@ -185,6 +189,7 @@ impl RefusalCode {
     pub fn grpc_code(&self) -> tonic::Code {
         match self {
             Self::CredentialBindingRequired => tonic::Code::PermissionDenied,
+            Self::CredentialChannelNotConfidential => tonic::Code::Unavailable,
             Self::NotFound => tonic::Code::NotFound,
         }
     }

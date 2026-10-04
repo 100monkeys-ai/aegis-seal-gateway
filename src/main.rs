@@ -103,14 +103,16 @@ async fn main() -> anyhow::Result<()> {
 
     let grpc_addr: std::net::SocketAddr = config.grpc_bind_addr.parse()?;
     let grpc_service = GatewayGrpcService::new(state);
+    let grpc_server = grpc_server_builder(config.grpc_tls.as_ref())?;
     tracing::info!(
+        tls = config.grpc_tls.is_some(),
         "aegis-seal-gateway gRPC listening on {}",
         config.grpc_bind_addr
     );
 
     let (http_result, grpc_result) = tokio::join!(
         axum::serve(listener, app),
-        tonic::transport::Server::builder()
+        grpc_server
             .layer(GrpcMetricsLayer)
             .add_service(ToolWorkflowServiceServer::new(grpc_service.clone()))
             .add_service(GatewayInvocationServiceServer::new(grpc_service))
@@ -120,6 +122,24 @@ async fn main() -> anyhow::Result<()> {
     grpc_result?;
 
     Ok(())
+}
+
+/// The gRPC server, over TLS when `tls` names a certificate and key (AEGIS
+/// ADR-132 H8). A file that cannot be read stops the gateway at start rather
+/// than serving plaintext in its place.
+fn grpc_server_builder(
+    tls: Option<&domain::GatewayGrpcTlsConfig>,
+) -> anyhow::Result<tonic::transport::Server> {
+    let builder = tonic::transport::Server::builder();
+    let Some(tls) = tls else {
+        return Ok(builder);
+    };
+    let cert = std::fs::read(&tls.cert_path)
+        .map_err(|e| anyhow::anyhow!("spec.network.grpc_tls.cert_path {}: {e}", tls.cert_path))?;
+    let key = std::fs::read(&tls.key_path)
+        .map_err(|e| anyhow::anyhow!("spec.network.grpc_tls.key_path {}: {e}", tls.key_path))?;
+    let identity = tonic::transport::Identity::from_pem(cert, key);
+    Ok(builder.tls_config(tonic::transport::ServerTlsConfig::new().identity(identity))?)
 }
 
 /// Build every repository, engine and service the gateway serves from, as
@@ -648,5 +668,196 @@ mod operator_plane_tests {
             "RPCs answered wrongly:\n{}",
             wrong.join("\n")
         );
+    }
+}
+
+#[cfg(test)]
+mod grpc_tls_tests {
+    //! AEGIS ADR-132 H8: a person's credential rides the call only over TLS.
+    //! The gateway's real gRPC server is started here, over TLS with a
+    //! throwaway certificate generated in the test and over plaintext, and
+    //! called through a real tonic client.
+
+    use super::*;
+    use crate::infrastructure::test_tokens::{gateway_config_trusting_test_keys, OperatorCaller};
+    // The gateway generates no client (build.rs); the orchestrator's, from
+    // the same .proto, speaks the same wire.
+    use aegis_orchestrator_proto::aegis::seal_gateway::v1 as proto;
+    use proto::gateway_invocation_service_client::GatewayInvocationServiceClient;
+
+    struct Running {
+        client: GatewayInvocationServiceClient<tonic::transport::Channel>,
+        dir: std::path::PathBuf,
+    }
+
+    /// Start the gateway's gRPC server on a loopback port, over TLS when
+    /// `tls` is set, and connect a client that trusts the throwaway CA.
+    async fn start(tls: bool) -> Running {
+        let dir = std::env::temp_dir().join(format!("gw-tls-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let url = format!("sqlite://{}", dir.join("gateway.db").display());
+        let mut config = gateway_config_trusting_test_keys(&url);
+        let ca = if tls {
+            let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+                .expect("throwaway certificate");
+            let cert_path = dir.join("grpc.crt");
+            let key_path = dir.join("grpc.key");
+            std::fs::write(&cert_path, generated.cert.pem()).expect("write cert");
+            std::fs::write(&key_path, generated.signing_key.serialize_pem()).expect("write key");
+            config.grpc_tls = Some(domain::GatewayGrpcTlsConfig {
+                cert_path: cert_path.display().to_string(),
+                key_path: key_path.display().to_string(),
+            });
+            Some(generated.cert.pem())
+        } else {
+            None
+        };
+        let (state, _jti) = build_state(config.clone()).await.expect("build state");
+        let mut server = grpc_server_builder(config.grpc_tls.as_ref()).expect("grpc server");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let port = listener.local_addr().expect("addr").port();
+        let incoming = tonic::transport::server::TcpIncoming::from(listener);
+        let service = GatewayGrpcService::new(state);
+        tokio::spawn(async move {
+            let _ = server
+                .add_service(GatewayInvocationServiceServer::new(service))
+                .serve_with_incoming(incoming)
+                .await;
+        });
+
+        let endpoint = match &ca {
+            Some(pem) => {
+                tonic::transport::Endpoint::from_shared(format!("https://localhost:{port}"))
+                    .expect("endpoint")
+                    .tls_config(
+                        tonic::transport::ClientTlsConfig::new()
+                            .ca_certificate(tonic::transport::Certificate::from_pem(pem))
+                            .domain_name("localhost"),
+                    )
+                    .expect("client tls")
+            }
+            None => tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{port}"))
+                .expect("endpoint"),
+        };
+        let channel = endpoint.connect().await.expect("connect");
+        Running {
+            client: GatewayInvocationServiceClient::new(channel),
+            dir,
+        }
+    }
+
+    fn operator<T>(message: T) -> tonic::Request<T> {
+        let mut request = tonic::Request::new(message);
+        let value = OperatorCaller::Orchestrator
+            .authorization()
+            .expect("operator token")
+            .parse()
+            .expect("metadata");
+        request.metadata_mut().insert("authorization", value);
+        request
+    }
+
+    fn credential() -> proto::ResolvedCredential {
+        proto::ResolvedCredential {
+            kind: proto::CredentialKind::BearerToken as i32,
+            value: "Mk7-channel-test-credential".to_string(),
+        }
+    }
+
+    fn tool_call(credential: Option<proto::ResolvedCredential>) -> proto::InvokeToolRequest {
+        proto::InvokeToolRequest {
+            execution_id: "exec-tls".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            server: "not-registered".to_string(),
+            tool: "anything".to_string(),
+            arguments_json: "{}".to_string(),
+            credential,
+            ..Default::default()
+        }
+    }
+
+    fn refusal_code(status: &tonic::Status) -> Option<String> {
+        status
+            .metadata()
+            .get(crate::infrastructure::errors::REFUSAL_CODE_METADATA)
+            .and_then(|v| v.to_str().ok())
+            .map(ToString::to_string)
+    }
+
+    #[tokio::test]
+    async fn a_credential_on_a_plaintext_listener_is_refused() {
+        let mut running = start(false).await;
+        let status = running
+            .client
+            .invoke_tool(operator(tool_call(Some(credential()))))
+            .await
+            .expect_err("refused");
+        assert_eq!(status.code(), tonic::Code::Unavailable);
+        assert_eq!(
+            refusal_code(&status).as_deref(),
+            Some("CREDENTIAL_CHANNEL_NOT_CONFIDENTIAL")
+        );
+        assert_eq!(status.message(), "This tool is not available right now.");
+
+        let status = running
+            .client
+            .list_tools(operator(proto::ListToolsRequest {
+                bound_servers: vec![proto::BoundServer {
+                    server: "not-registered".to_string(),
+                    credential: Some(credential()),
+                }],
+                ..Default::default()
+            }))
+            .await
+            .expect_err("refused");
+        assert_eq!(
+            refusal_code(&status).as_deref(),
+            Some("CREDENTIAL_CHANNEL_NOT_CONFIDENTIAL")
+        );
+        let _ = std::fs::remove_dir_all(running.dir);
+    }
+
+    #[tokio::test]
+    async fn a_call_without_a_credential_on_a_plaintext_listener_behaves_as_before() {
+        let mut running = start(false).await;
+        let tools = running
+            .client
+            .list_tools(operator(proto::ListToolsRequest::default()))
+            .await
+            .expect("listed");
+        assert!(tools.into_inner().tools.is_empty());
+        let status = running
+            .client
+            .invoke_tool(operator(tool_call(None)))
+            .await
+            .expect_err("no such server");
+        assert_eq!(refusal_code(&status).as_deref(), Some("NOT_FOUND"));
+        let _ = std::fs::remove_dir_all(running.dir);
+    }
+
+    #[tokio::test]
+    async fn a_credential_over_tls_is_accepted_by_the_channel_check() {
+        let mut running = start(true).await;
+        let status = running
+            .client
+            .invoke_tool(operator(tool_call(Some(credential()))))
+            .await
+            .expect_err("no such server");
+        assert_eq!(refusal_code(&status).as_deref(), Some("NOT_FOUND"));
+        let _ = std::fs::remove_dir_all(running.dir);
+    }
+
+    #[test]
+    fn an_unreadable_certificate_stops_the_gateway_at_start() {
+        let missing = domain::GatewayGrpcTlsConfig {
+            cert_path: "/nonexistent/grpc.crt".to_string(),
+            key_path: "/nonexistent/grpc.key".to_string(),
+        };
+        let err = grpc_server_builder(Some(&missing))
+            .err()
+            .expect("refuses to start");
+        assert!(err.to_string().contains("cert_path"), "{err}");
     }
 }

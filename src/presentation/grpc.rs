@@ -5,6 +5,7 @@ use tonic::{Request, Response, Status};
 use crate::application::ApiExplorerRequest;
 use crate::domain::{StepErrorPolicy, ToolWorkflow, WorkflowStep};
 use crate::infrastructure::auth::{verify_operator_token, IdentityKind};
+use crate::infrastructure::errors::{GatewayError, RefusalCode, REFUSAL_CODE_METADATA};
 use crate::presentation::state::AppState;
 
 pub mod proto {
@@ -28,6 +29,40 @@ impl GatewayGrpcService {
     ) -> Result<(Option<String>, IdentityKind), Status> {
         require_operator_metadata_for_config(&self.state.config, metadata).await
     }
+
+    /// Audit an invocation RPC with who it acts for (AEGIS ADR-132 G2). The
+    /// event holds identifiers only: no argument, no credential.
+    async fn record_invocation(
+        &self,
+        rpc: &str,
+        execution_id: &str,
+        tool_name: &str,
+        tenant_id: &str,
+        acting: Option<proto::ActingIdentity>,
+    ) {
+        let event = crate::domain::GatewayEvent::InvocationRequested {
+            rpc: rpc.to_string(),
+            execution_id: execution_id.to_string(),
+            tool_name: tool_name.to_string(),
+            tenant_id: tenant_id.to_string(),
+            acting: acting.map(acting_identity),
+            requested_at: chrono::Utc::now(),
+        };
+        if let Ok(payload) = serde_json::to_value(&event) {
+            if let Err(err) = self
+                .state
+                .audit_store
+                .append_event("InvocationRequested", &payload)
+                .await
+            {
+                tracing::warn!(rpc, error = %err, "could not audit an invocation request");
+            }
+        }
+    }
+}
+
+fn acting_identity(acting: proto::ActingIdentity) -> crate::domain::ActingIdentity {
+    crate::domain::ActingIdentity::new(acting.user_id, acting.agent_id, acting.workflow_id)
 }
 
 /// Validates the gRPC `authorization` metadata as an operator token and
@@ -216,6 +251,14 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         // Invocation runs tools with the gateway's credentials: operator only.
         self.require_operator_metadata(request.metadata()).await?;
         let req = request.into_inner();
+        self.record_invocation(
+            "InvokeWorkflow",
+            &req.execution_id,
+            &req.workflow_name,
+            &req.tenant_id,
+            req.acting.clone(),
+        )
+        .await;
         let input: Value = serde_json::from_str(&req.input_json)
             .map_err(|e| Status::invalid_argument(format!("invalid input_json: {e}")))?;
 
@@ -248,6 +291,14 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         // Invocation runs tools with the gateway's credentials: operator only.
         self.require_operator_metadata(request.metadata()).await?;
         let req = request.into_inner();
+        self.record_invocation(
+            "InvokeCli",
+            &req.execution_id,
+            &req.tool_name,
+            &req.tenant_id,
+            req.acting.clone(),
+        )
+        .await;
         let fsal_mounts = req
             .fsal_mounts
             .into_iter()
@@ -296,6 +347,14 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
     ) -> Result<Response<proto::ExploreApiResponse>, Status> {
         self.require_operator_metadata(request.metadata()).await?;
         let req = request.into_inner();
+        self.record_invocation(
+            "ExploreApi",
+            &req.execution_id,
+            &req.operation_id,
+            &req.tenant_id,
+            req.acting.clone(),
+        )
+        .await;
         let parameters: Value = serde_json::from_str(&req.parameters_json)
             .map_err(|e| Status::invalid_argument(format!("invalid parameters_json: {e}")))?;
 
@@ -324,6 +383,27 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
             operation_metadata_json: serde_json::to_string(&result.operation_metadata)
                 .map_err(|e| Status::internal(e.to_string()))?,
         }))
+    }
+
+    async fn invoke_tool(
+        &self,
+        request: Request<proto::InvokeToolRequest>,
+    ) -> Result<Response<proto::InvokeToolResponse>, Status> {
+        self.require_operator_metadata(request.metadata()).await?;
+        let req = request.into_inner();
+        let tool_name = format!("{}.{}", req.server, req.tool);
+        self.record_invocation(
+            "InvokeTool",
+            &req.execution_id,
+            &tool_name,
+            &req.tenant_id,
+            req.acting.clone(),
+        )
+        .await;
+        Err(internal(GatewayError::refused(
+            RefusalCode::NotFound,
+            format!("Not found: tool '{tool_name}'."),
+        )))
     }
 
     async fn list_tools(
@@ -508,6 +588,9 @@ fn invalid(err: crate::infrastructure::errors::GatewayError) -> Status {
 }
 
 fn internal(err: crate::infrastructure::errors::GatewayError) -> Status {
+    if let GatewayError::Refused { code, message } = &err {
+        return refusal_status(*code, message);
+    }
     if err.is_pool_timeout() {
         tracing::error!(
             handler = "grpc",
@@ -516,6 +599,16 @@ fn internal(err: crate::infrastructure::errors::GatewayError) -> Status {
         );
     }
     Status::internal(err.to_string())
+}
+
+/// A refusal as the orchestrator relays it (AEGIS ADR-035 R1): the R5 code in
+/// the `seal-refusal-code` metadata, the caller-facing text as the message.
+fn refusal_status(code: RefusalCode, message: &str) -> Status {
+    let mut status = Status::new(code.grpc_code(), message.to_string());
+    if let Ok(value) = code.as_str().parse() {
+        status.metadata_mut().insert(REFUSAL_CODE_METADATA, value);
+    }
+    status
 }
 
 #[cfg(test)]
@@ -677,5 +770,99 @@ mod tests {
         assert_eq!(repo_arg, None);
         // And the source of that None is the helper, not a literal.
         assert!(tenant_id.is_none());
+    }
+}
+
+#[cfg(test)]
+mod invocation_tests {
+    use super::proto::gateway_invocation_service_server::GatewayInvocationService;
+    use super::*;
+    use crate::infrastructure::test_tokens::{gateway_config_trusting_test_keys, OperatorCaller};
+
+    pub(crate) async fn service_on_sqlite() -> (GatewayGrpcService, std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("gw-grpc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let url = format!("sqlite://{}", dir.join("gateway.db").display());
+        let (state, _jti) = crate::build_state(gateway_config_trusting_test_keys(&url))
+            .await
+            .expect("build state");
+        (GatewayGrpcService::new(state), dir, url)
+    }
+
+    pub(crate) fn operator_request<T>(message: T) -> Request<T> {
+        let mut request = Request::new(message);
+        let value = OperatorCaller::Orchestrator
+            .authorization()
+            .expect("operator token")
+            .parse()
+            .expect("metadata value");
+        request.metadata_mut().insert("authorization", value);
+        request
+    }
+
+    pub(crate) async fn audit_rows(url: &str) -> Vec<(String, String)> {
+        let pool = sqlx::SqlitePool::connect(url).await.expect("open audit db");
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT event_type, payload FROM gateway_events ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("read audit rows")
+    }
+
+    fn acting() -> proto::ActingIdentity {
+        proto::ActingIdentity {
+            user_id: "user-7".to_string(),
+            agent_id: "6c1f0e2a-0000-4000-8000-000000000007".to_string(),
+            workflow_id: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_invocation_audits_who_it_acts_for() {
+        let (service, dir, url) = service_on_sqlite().await;
+        let _ = service
+            .invoke_workflow(operator_request(proto::InvokeWorkflowRequest {
+                execution_id: "exec-1".to_string(),
+                workflow_name: "not-a-workflow".to_string(),
+                input_json: "{}".to_string(),
+                tenant_id: "tenant-a".to_string(),
+                acting: Some(acting()),
+                ..Default::default()
+            }))
+            .await;
+
+        let rows = audit_rows(&url).await;
+        let (_, payload) = rows
+            .iter()
+            .find(|(kind, _)| kind == "InvocationRequested")
+            .expect("an InvocationRequested row");
+        let event: serde_json::Value = serde_json::from_str(payload).expect("json");
+        let body = &event["InvocationRequested"];
+        assert_eq!(body["rpc"], "InvokeWorkflow");
+        assert_eq!(body["execution_id"], "exec-1");
+        assert_eq!(body["acting"]["user_id"], "user-7");
+        assert_eq!(
+            body["acting"]["agent_id"],
+            "6c1f0e2a-0000-4000-8000-000000000007"
+        );
+        assert!(body["acting"]["workflow_id"].is_null());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_user_bound_workflow_is_refused_with_its_code_in_the_metadata() {
+        let status = internal(GatewayError::refused(
+            RefusalCode::CredentialBindingRequired,
+            "This tool needs your own 'example' credential, granted to this agent.",
+        ));
+        assert_eq!(status.code(), tonic::Code::PermissionDenied);
+        assert_eq!(
+            status
+                .metadata()
+                .get(REFUSAL_CODE_METADATA)
+                .and_then(|v| v.to_str().ok()),
+            Some("CREDENTIAL_BINDING_REQUIRED")
+        );
     }
 }

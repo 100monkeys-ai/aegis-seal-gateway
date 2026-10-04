@@ -3,16 +3,12 @@ use std::collections::HashMap;
 
 use crate::domain::{CredentialRef, CredentialResolutionPath, SensitiveString};
 use crate::infrastructure::config::GatewayConfig;
-use crate::infrastructure::errors::GatewayError;
+use crate::infrastructure::errors::{GatewayError, RefusalCode};
 
 #[derive(Clone)]
 pub struct CredentialResolver {
     config: GatewayConfig,
     http_client: reqwest::Client,
-    /// Postgres pool used exclusively by `UserBound` resolution to query
-    /// `credential_bindings` and `credential_grants`.  `None` when the
-    /// gateway is configured with SQLite (no user-bound credentials possible).
-    pool: Option<sqlx::PgPool>,
 }
 
 #[derive(Clone)]
@@ -43,11 +39,10 @@ struct KeycloakTokenExchangeResponse {
 }
 
 impl CredentialResolver {
-    pub fn new(config: GatewayConfig, pool: Option<sqlx::PgPool>) -> Self {
+    pub fn new(config: GatewayConfig) -> Self {
         Self {
             config,
             http_client: reqwest::Client::new(),
-            pool,
         }
     }
 
@@ -87,21 +82,7 @@ impl CredentialResolver {
                 self.resolve_static_ref(&reference.key).await
             }
             CredentialResolutionPath::UserBound { provider } => {
-                let result = self
-                    .resolve_user_bound(provider, zaru_user_token, tenant_id)
-                    .await?;
-                if result.is_empty() {
-                    // No active user binding found — fall back to HumanDelegated if a
-                    // user token is present, then SystemJit if configured.
-                    if zaru_user_token.is_some() {
-                        self.resolve_human_delegated(provider, zaru_user_token)
-                            .await
-                    } else {
-                        Err(GatewayError::Unauthorized)
-                    }
-                } else {
-                    Ok(result)
-                }
+                Err(credential_binding_required(provider))
             }
         }
     }
@@ -275,36 +256,8 @@ impl CredentialResolver {
                         .await
                 }
             }
-            // UserBound credentials are key/value pairs, not registry credentials.
-            // Resolve the raw credential fields and interpret them as registry credentials.
             CredentialResolutionPath::UserBound { provider } => {
-                let headers = self
-                    .resolve_user_bound(provider, zaru_user_token, tenant_id)
-                    .await?;
-                if headers.is_empty() {
-                    return Err(GatewayError::Unauthorized);
-                }
-                // UserBound registry credentials surface the token as the password.
-                let token = headers
-                    .into_iter()
-                    .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
-                    .ok_or_else(|| {
-                        GatewayError::Serialization(
-                            "user-bound credential missing authorization header".to_string(),
-                        )
-                    })?;
-                let token_value = token
-                    .1
-                    .expose()
-                    .strip_prefix("Bearer ")
-                    .or_else(|| token.1.expose().strip_prefix("bearer "))
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| token.1.expose().to_string());
-                Ok(RegistryCredentials {
-                    registry: provider.clone(),
-                    username: SensitiveString::new("oauth2accesstoken"),
-                    password: SensitiveString::new(token_value),
-                })
+                Err(credential_binding_required(provider))
             }
         }
     }
@@ -452,95 +405,6 @@ impl CredentialResolver {
         })
     }
 
-    /// Resolve credentials from a user-owned binding stored in the orchestrator's
-    /// `credential_bindings` / `credential_grants` tables, which this gateway reads
-    /// directly via its shared `PgPool`.
-    ///
-    /// Returns an empty `Vec` when:
-    /// - No `PgPool` is available (SQLite mode).
-    /// - No Zaru user token / `user_id` claim is present in the session.
-    /// - No active binding exists for the requested provider and user.
-    ///
-    /// The caller is responsible for falling back to an alternative path.
-    async fn resolve_user_bound(
-        &self,
-        provider: &str,
-        zaru_user_token: Option<&str>,
-        tenant_id: Option<&str>,
-    ) -> Result<Vec<(String, SensitiveString)>, GatewayError> {
-        let pool = match &self.pool {
-            Some(p) => p,
-            None => return Ok(vec![]),
-        };
-
-        // Extract the user_id from the Zaru JWT without full validation — the token
-        // was already validated upstream by the auth middleware.  We only need the
-        // `sub` claim, which is the canonical user identifier in Keycloak.
-        let user_id = match zaru_user_token {
-            Some(token) => extract_jwt_sub(token)?,
-            None => return Ok(vec![]),
-        };
-
-        if provider.trim().is_empty() {
-            return Err(GatewayError::Validation(
-                "UserBound provider cannot be empty".to_string(),
-            ));
-        }
-
-        // Query the active binding for this user + provider, scoped to the tenant.
-        // `credential_grants` encodes which agents (or all agents) may use the binding.
-        // The gateway trusts that the orchestrator's grant check was already enforced
-        // at invocation time; here we only enforce user ownership and provider match.
-        #[derive(sqlx::FromRow)]
-        struct BindingRow {
-            secret_path: String,
-        }
-
-        let row: Option<BindingRow> = sqlx::query_as::<_, BindingRow>(
-            r#"
-            SELECT cb.secret_path
-              FROM credential_bindings cb
-              JOIN credential_grants cg ON cg.binding_id = cb.id
-             WHERE cb.owner_user_id = $1
-               AND cb.provider      = $2
-               AND cb.status        = 'active'
-               AND (
-                     cb.tenant_id IS NULL
-                  OR cb.tenant_id = $3
-               )
-             LIMIT 1
-            "#,
-        )
-        .bind(user_id)
-        .bind(provider)
-        .bind(tenant_id.unwrap_or(""))
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| GatewayError::Database(e.to_string()))?;
-
-        let binding = match row {
-            Some(b) => b,
-            None => return Ok(vec![]),
-        };
-
-        // Read the secret from OpenBao using the KV path stored in the binding.
-        let fields = self.fetch_kv_fields(&binding.secret_path).await?;
-        let token = fields
-            .get("token")
-            .cloned()
-            .or_else(|| fields.get("value").cloned())
-            .ok_or_else(|| {
-                GatewayError::Serialization(
-                    "user-bound OpenBao KV secret missing token/value field".to_string(),
-                )
-            })?;
-
-        Ok(vec![(
-            "Authorization".to_string(),
-            SensitiveString::new(format!("Bearer {token}")),
-        )])
-    }
-
     async fn resolve_human_delegated(
         &self,
         target_service: &str,
@@ -620,26 +484,16 @@ impl CredentialResolver {
     }
 }
 
-/// Decode the `sub` claim from a JWT without signature verification.
-///
-/// The token has already been verified by the auth middleware upstream; here we
-/// only need the subject identifier to scope the `credential_bindings` query.
-fn extract_jwt_sub(token: &str) -> Result<String, GatewayError> {
-    let parts: Vec<&str> = token.splitn(3, '.').collect();
-    if parts.len() < 2 {
-        return Err(GatewayError::Unauthorized);
-    }
-    use base64::Engine as _;
-    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|_| GatewayError::Unauthorized)?;
-    let claims: serde_json::Value =
-        serde_json::from_slice(&payload).map_err(|_| GatewayError::Unauthorized)?;
-    claims
-        .get("sub")
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
-        .ok_or(GatewayError::Unauthorized)
+/// A person's own credential is never read by the gateway: the orchestrator
+/// resolves it for the acting user's binding, checks the binding's grant to
+/// the acting agent or workflow where it reads the secret, and hands it over
+/// on the call (AEGIS ADR-132 G2, G3 as settled by correction C1). A path that
+/// asks for one here has none to use.
+fn credential_binding_required(provider: &str) -> GatewayError {
+    GatewayError::refused(
+        RefusalCode::CredentialBindingRequired,
+        format!("This tool needs your own '{provider}' credential, granted to this agent."),
+    )
 }
 
 /// Prefix an OpenBao engine path with `tenant-{slug}/` when a tenant slug is provided.
@@ -653,5 +507,154 @@ fn tenant_scoped_engine_path(engine_path: &str, tenant_id: Option<&str>) -> Stri
             format!("tenant-{}/{}", slug.trim(), engine_path.trim_matches('/'))
         }
         _ => engine_path.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! A person's credential is never read here (AEGIS ADR-132 as settled by
+    //! correction C1): the orchestrator resolves it, checks its grant and
+    //! hands it over on the call. The other credential kinds are unchanged.
+    use super::*;
+    use crate::infrastructure::test_tokens::gateway_config_trusting_test_keys;
+    use axum::routing::{get, post};
+    use axum::{Json, Router};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Serve `router` on a loopback port; answers its base URL.
+    async fn serve(router: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        format!("http://{addr}")
+    }
+
+    /// A Keycloak token endpoint that counts the exchanges it is asked for.
+    async fn counting_keycloak() -> (String, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let router = Router::new().route(
+            "/token",
+            post(move || {
+                let seen = seen.clone();
+                async move {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    Json(serde_json::json!({"access_token": "exchanged-token"}))
+                }
+            }),
+        );
+        (format!("{}/token", serve(router).await), calls)
+    }
+
+    fn resolver_with(keycloak_url: Option<String>, openbao: Option<String>) -> CredentialResolver {
+        let mut config = gateway_config_trusting_test_keys("sqlite::memory:");
+        config.keycloak_token_exchange_url = keycloak_url;
+        config.keycloak_client_id = Some("aegis-seal-gateway".to_string());
+        config.keycloak_client_secret = Some("client-secret".to_string());
+        config.openbao_addr = openbao;
+        config.openbao_token = Some("openbao-test-token".to_string());
+        CredentialResolver::new(config)
+    }
+
+    /// A JWT-shaped user token; only its shape matters here.
+    fn user_token() -> String {
+        use base64::Engine as _;
+        let enc = |v: serde_json::Value| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string())
+        };
+        format!(
+            "{}.{}.sig",
+            enc(serde_json::json!({"alg": "none"})),
+            enc(serde_json::json!({"sub": "user-1"}))
+        )
+    }
+
+    #[tokio::test]
+    async fn a_user_bound_path_is_refused_and_never_falls_back_to_a_token_exchange() {
+        let (keycloak, exchanges) = counting_keycloak().await;
+        let resolver = resolver_with(Some(keycloak), None);
+        let path = CredentialResolutionPath::UserBound {
+            provider: "example-provider".to_string(),
+        };
+        let token = user_token();
+
+        let result = resolver
+            .resolve(&path, Some(&token), Some("tenant-a"))
+            .await;
+
+        match result {
+            Err(GatewayError::Refused { code, message }) => {
+                assert_eq!(code, RefusalCode::CredentialBindingRequired);
+                assert!(message.contains("example-provider"), "{message}");
+            }
+            other => panic!("expected CREDENTIAL_BINDING_REQUIRED, got {other:?}"),
+        }
+        assert_eq!(
+            exchanges.load(Ordering::SeqCst),
+            0,
+            "no fallback to HumanDelegated"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_user_bound_registry_credential_is_refused_without_a_lookup() {
+        let resolver = resolver_with(None, None);
+        let path = CredentialResolutionPath::UserBound {
+            provider: "example-registry".to_string(),
+        };
+        let token = user_token();
+        let result = resolver
+            .resolve_registry_credentials(&path, Some(&token), true, Some("tenant-a"))
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(GatewayError::Refused {
+                    code: RefusalCode::CredentialBindingRequired,
+                    ..
+                })
+            ),
+            "{:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_static_ref_still_reads_its_token_from_openbao() {
+        let router = Router::new().route(
+            "/v1/secret/data/team/api",
+            get(|| async {
+                Json(serde_json::json!({"data": {"data": {"token": "static-token"}}}))
+            }),
+        );
+        let resolver = resolver_with(None, Some(serve(router).await));
+        let path = CredentialResolutionPath::StaticRef(CredentialRef {
+            key: "team/api".to_string(),
+        });
+        let headers = resolver.resolve(&path, None, None).await.expect("resolved");
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0, "Authorization");
+        assert_eq!(headers[0].1.expose(), "Bearer static-token");
+    }
+
+    #[tokio::test]
+    async fn a_human_delegated_path_still_exchanges_the_users_token() {
+        let (keycloak, exchanges) = counting_keycloak().await;
+        let resolver = resolver_with(Some(keycloak), None);
+        let path = CredentialResolutionPath::HumanDelegated {
+            target_service: "example-audience".to_string(),
+        };
+        let token = user_token();
+        let headers = resolver
+            .resolve(&path, Some(&token), None)
+            .await
+            .expect("exchanged");
+        assert_eq!(headers[0].1.expose(), "Bearer exchanged-token");
+        assert_eq!(exchanges.load(Ordering::SeqCst), 1);
     }
 }

@@ -98,6 +98,16 @@ pub enum GatewayEvent {
         reason: String,
         failed_at: DateTime<Utc>,
     },
+    /// An operator-authenticated invocation RPC and who it acts for
+    /// (AEGIS ADR-132 G2). Carries no argument and no credential.
+    InvocationRequested {
+        rpc: String,
+        execution_id: String,
+        tool_name: String,
+        tenant_id: String,
+        acting: Option<crate::domain::ActingIdentity>,
+        requested_at: DateTime<Utc>,
+    },
     ToolCallAuthorized {
         execution_id: String,
         agent_id: String,

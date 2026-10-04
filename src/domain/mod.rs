@@ -1,3 +1,4 @@
+pub mod acting;
 pub mod api_spec;
 pub mod cli_tool;
 pub mod config_manifest;
@@ -8,6 +9,7 @@ pub mod security_context;
 pub mod sensitive;
 pub mod tool_workflow;
 
+pub use acting::*;
 pub use api_spec::*;
 pub use cli_tool::*;
 pub use config_manifest::*;

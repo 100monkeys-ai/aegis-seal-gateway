@@ -155,6 +155,48 @@ pub enum GatewayError {
     Serialization(String),
     #[error("internal error: {0}")]
     Internal(String),
+    /// A refusal the orchestrator relays to its caller in AEGIS ADR-035's
+    /// shape: `code` is the R5 code, `message` the caller-facing text (R3),
+    /// which never holds a credential.
+    #[error("refused ({}): {message}", code.as_str())]
+    Refused { code: RefusalCode, message: String },
+}
+
+/// The ADR-035 R5 codes a gateway refusal carries to the orchestrator in the
+/// gRPC metadata [`REFUSAL_CODE_METADATA`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalCode {
+    /// The call needs the acting user's own credential and carries none.
+    CredentialBindingRequired,
+    NotFound,
+}
+
+/// The gRPC metadata key holding a refusal's [`RefusalCode`].
+pub const REFUSAL_CODE_METADATA: &str = "seal-refusal-code";
+
+impl RefusalCode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::CredentialBindingRequired => "CREDENTIAL_BINDING_REQUIRED",
+            Self::NotFound => "NOT_FOUND",
+        }
+    }
+
+    pub fn grpc_code(&self) -> tonic::Code {
+        match self {
+            Self::CredentialBindingRequired => tonic::Code::PermissionDenied,
+            Self::NotFound => tonic::Code::NotFound,
+        }
+    }
+}
+
+impl GatewayError {
+    pub fn refused(code: RefusalCode, message: impl Into<String>) -> Self {
+        Self::Refused {
+            code,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<sqlx::Error> for GatewayError {

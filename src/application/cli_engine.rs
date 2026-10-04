@@ -532,7 +532,7 @@ mod tests {
 
         let engine = CliEngine::new(
             repo,
-            CredentialResolver::new(test_config(), None),
+            CredentialResolver::new(test_config()),
             SemanticGate::new(None),
             Arc::new(NoopEventStore),
             test_config(),
@@ -603,7 +603,7 @@ mod tests {
     fn make_engine(repo: Arc<InMemoryCliToolRepo>) -> CliEngine {
         CliEngine::new(
             repo,
-            CredentialResolver::new(test_config(), None),
+            CredentialResolver::new(test_config()),
             SemanticGate::new(None),
             Arc::new(NoopEventStore),
             test_config(),

@@ -126,15 +126,11 @@ async fn main() -> anyhow::Result<()> {
 /// `config` describes them. Returns the application state and the JTI
 /// repository, whose cleanup task `main` owns.
 async fn build_state(config: GatewayConfig) -> anyhow::Result<(AppState, Arc<dyn JtiRepository>)> {
-    let mut credential_pg_pool: Option<sqlx::PgPool> = None;
     let (specs, workflows, cli_tools, seal_sessions, security_contexts, jti_repo, event_store): RepositoryBundle =
         if config.database_url.starts_with("postgres://")
             || config.database_url.starts_with("postgresql://")
         {
             let store = PostgresStore::new(&config.database_url).await?;
-            // Expose the pool to CredentialResolver for UserBound resolution.
-            credential_pg_pool =
-                Some(infrastructure::persistence::postgres::build_pool(&config.database_url).await?);
             (
                 Arc::new(store.clone()),
                 Arc::new(store.clone()),
@@ -164,7 +160,7 @@ async fn build_state(config: GatewayConfig) -> anyhow::Result<(AppState, Arc<dyn
     }
 
     let http_client = HttpClient::new()?;
-    let credential_resolver = CredentialResolver::new(config.clone(), credential_pg_pool);
+    let credential_resolver = CredentialResolver::new(config.clone());
     let semantic_gate = SemanticGate::new(config.semantic_judge_url.clone());
 
     let workflow_engine = WorkflowEngine::new(
@@ -590,6 +586,19 @@ mod operator_plane_tests {
                     proto::ExploreApiRequest {
                         api_spec_id: id,
                         parameters_json: "{}".to_string(),
+                        ..Default::default()
+                    },
+                    caller,
+                ))
+                .await
+                .map(|_| ()),
+            "InvokeTool" => service
+                .invoke_tool(request(
+                    proto::InvokeToolRequest {
+                        execution_id: id,
+                        server: "not-a-server".to_string(),
+                        tool: "not-a-tool".to_string(),
+                        arguments_json: "{}".to_string(),
                         ..Default::default()
                     },
                     caller,

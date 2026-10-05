@@ -33,6 +33,8 @@ pub struct GatewayConfig {
     /// The gRPC listener's TLS certificate and key, by path (AEGIS ADR-132
     /// H8); `None` serves plaintext.
     pub grpc_tls: Option<crate::domain::GatewayGrpcTlsConfig>,
+    /// Remote MCP servers registered as data (AEGIS ADR-132 G1).
+    pub mcp_servers: Vec<crate::domain::RemoteMcpServer>,
 }
 
 impl GatewayConfig {
@@ -41,6 +43,23 @@ impl GatewayConfig {
             container_cli::resolve_container_cli(manifest.spec.cli.container_cli.as_deref())?;
         let version = container_cli::validate_container_cli(&resolved_cli)?;
         tracing::info!(binary = %resolved_cli, version = %version, "Container CLI resolved");
+
+        let mut mcp_servers: Vec<crate::domain::RemoteMcpServer> = Vec::new();
+        for entry in &manifest.spec.mcp_servers {
+            let server = crate::domain::RemoteMcpServer::new(
+                &entry.name,
+                &entry.url,
+                entry.description.clone(),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if mcp_servers.iter().any(|known| known.name == server.name) {
+                anyhow::bail!(
+                    "mcp_servers: the name '{}' is registered twice",
+                    server.name
+                );
+            }
+            mcp_servers.push(server);
+        }
 
         let jwks_validator =
             std::sync::Arc::new(crate::infrastructure::jwks_validator::JwksValidator::new(
@@ -107,6 +126,7 @@ impl GatewayConfig {
                 .orchestrator_url
                 .filter(|value| !value.trim().is_empty()),
             grpc_tls: manifest.spec.network.grpc_tls,
+            mcp_servers,
         })
     }
 

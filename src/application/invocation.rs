@@ -4,9 +4,11 @@ use base64::Engine;
 use serde_json::Value;
 
 use crate::application::{
-    CliEngine, CliFsalMount, CliInvocation, NativeToolEngine, WorkflowEngine,
+    CliEngine, CliFsalMount, CliInvocation, NativeToolEngine, RemoteMcpEngine, RemoteTool,
+    WorkflowEngine,
 };
 use crate::domain::SealEnvelope;
+use crate::domain::{ActingIdentity, SensitiveString};
 use crate::domain::{
     EphemeralCliToolRepository, JtiRepository, SealSessionRepository, SealSessionStatus,
     SecurityContextRepository, ToolWorkflow, WorkflowId,
@@ -14,6 +16,7 @@ use crate::domain::{
 use crate::infrastructure::auth::IdentityKind;
 use crate::infrastructure::config::GatewayConfig;
 use crate::infrastructure::errors::GatewayError;
+use crate::infrastructure::errors::RefusalCode;
 use crate::infrastructure::metrics::{
     record_attestation, record_policy_violation, record_tool_invocation,
 };
@@ -27,6 +30,8 @@ pub struct InvocationService {
     cli_engine: CliEngine,
     /// Present only when `orchestrator_url` is configured; enables native tools.
     native_tool_engine: Option<NativeToolEngine>,
+    /// Remote MCP servers registered as data (AEGIS ADR-132 G1).
+    remote_mcp: Arc<RemoteMcpEngine>,
     cli_tools: Arc<dyn EphemeralCliToolRepository>,
     seal_sessions: Arc<dyn SealSessionRepository>,
     security_contexts: Arc<dyn SecurityContextRepository>,
@@ -41,6 +46,7 @@ impl InvocationService {
         workflow_engine: WorkflowEngine,
         cli_engine: CliEngine,
         native_tool_engine: Option<NativeToolEngine>,
+        remote_mcp: Arc<RemoteMcpEngine>,
         cli_tools: Arc<dyn EphemeralCliToolRepository>,
         seal_sessions: Arc<dyn SealSessionRepository>,
         security_contexts: Arc<dyn SecurityContextRepository>,
@@ -52,6 +58,7 @@ impl InvocationService {
             workflow_engine,
             cli_engine,
             native_tool_engine,
+            remote_mcp,
             cli_tools,
             seal_sessions,
             security_contexts,
@@ -403,6 +410,109 @@ impl InvocationService {
                 )
                 .await
         }
+    }
+
+    /// Call `tool` on the registered remote MCP server `server` for `acting`,
+    /// with the credential the orchestrator resolved for that user's binding
+    /// (AEGIS ADR-132 G1, G3). The credential is used for this call and
+    /// dropped when it returns. Policy, metrics and audit as for any gateway
+    /// tool.
+    pub async fn invoke_remote_tool(
+        &self,
+        execution_id: &str,
+        acting: &ActingIdentity,
+        server: &str,
+        tool: &str,
+        arguments: Value,
+        credential: Option<SensitiveString>,
+    ) -> Result<Value, GatewayError> {
+        let tool_name = format!("{server}.{tool}");
+        if !self.remote_mcp.is_registered(server) {
+            return Err(GatewayError::refused(
+                RefusalCode::NotFound,
+                format!("Not found: tool '{tool_name}'."),
+            ));
+        }
+        let Some(credential) = credential else {
+            return Err(GatewayError::refused(
+                RefusalCode::CredentialBindingRequired,
+                format!(
+                    "This tool needs your own credential for '{server}', granted to this agent."
+                ),
+            ));
+        };
+        let security_context = self
+            .security_contexts
+            .find_by_name("internal")
+            .await?
+            .ok_or_else(|| {
+                GatewayError::Internal("missing required security context 'internal'".to_string())
+            })?;
+        security_context.evaluate(&tool_name, &arguments)?;
+
+        let started = Instant::now();
+        let result = self
+            .remote_mcp
+            .call_tool(server, &acting.user_id, &credential, tool, arguments)
+            .await;
+        drop(credential);
+        let outcome = match &result {
+            Ok(_) => "ok".to_string(),
+            Err(GatewayError::Refused { code, .. }) => code.as_str().to_string(),
+            Err(_) => "error".to_string(),
+        };
+        record_tool_invocation(
+            &tool_name,
+            "mcp",
+            if result.is_ok() { "ok" } else { "error" },
+            started.elapsed().as_secs_f64(),
+        );
+        if let Ok(event) = serde_json::to_value(crate::domain::GatewayEvent::RemoteToolInvoked {
+            execution_id: execution_id.to_string(),
+            tool_name: tool_name.clone(),
+            acting: acting.clone(),
+            outcome,
+            duration_ms: started.elapsed().as_millis() as u64,
+            invoked_at: chrono::Utc::now(),
+        }) {
+            let _ = self
+                .event_store
+                .append_event("RemoteToolInvoked", &event)
+                .await;
+        }
+        result
+    }
+
+    /// The tools of each bound remote MCP server, as each shows `acting`
+    /// with that user's credential (AEGIS ADR-132 G5). A server that is not
+    /// registered or fails to list is left out and logged.
+    pub async fn list_remote_tools(
+        &self,
+        acting: &ActingIdentity,
+        bound: Vec<(String, SensitiveString)>,
+    ) -> Vec<RemoteTool> {
+        let mut tools = Vec::new();
+        for (server, credential) in bound {
+            if !self.remote_mcp.is_registered(&server) {
+                tracing::warn!(server = %server, "a bound server is not registered here");
+                continue;
+            }
+            match self
+                .remote_mcp
+                .list_tools(&server, &acting.user_id, &credential)
+                .await
+            {
+                Ok(listed) => tools.extend(listed),
+                Err(err) => {
+                    let code = match &err {
+                        GatewayError::Refused { code, .. } => code.as_str(),
+                        _ => "error",
+                    };
+                    tracing::warn!(server = %server, code, "a bound server's tools could not be listed");
+                }
+            }
+        }
+        tools
     }
 
     pub async fn find_workflow_by_id(

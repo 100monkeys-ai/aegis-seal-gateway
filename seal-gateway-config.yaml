@@ -8,6 +8,11 @@ spec:
   network:
     bind_addr: "0.0.0.0:8089"
     grpc_bind_addr: "0.0.0.0:50055"
+    # gRPC over TLS (AEGIS ADR-132 H8): PEM files by path. Without it gRPC is
+    # plaintext, and a call carrying a person's credential is refused.
+    # grpc_tls:
+    #   cert_path: "/etc/aegis/tls/seal-gateway.crt"
+    #   key_path: "/etc/aegis/tls/seal-gateway.key"
 
   database:
     url: "sqlite://gateway.db"
@@ -39,3 +44,13 @@ spec:
 
   ui:
     enabled: true
+
+  # Remote MCP servers, a tool source registered as data (AEGIS ADR-132 G1).
+  # Each server's tools are exposed as <name>.<tool>, listed and called with
+  # the acting user's own credential, which the orchestrator resolves and
+  # sends on each call; no credential is configured here. The gateway dials
+  # public addresses on ports 443 and 80 only.
+  # mcp_servers:
+  #   - name: "example-notes"
+  #     url: "https://mcp.example.com/api/mcp"
+  #     description: "An example remote MCP server"

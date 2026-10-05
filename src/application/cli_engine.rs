@@ -510,6 +510,7 @@ mod tests {
             nfs_mount_port: 20048,
             orchestrator_url: None,
             grpc_tls: None,
+            mcp_servers: Vec::new(),
         }
     }
 

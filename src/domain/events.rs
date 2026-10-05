@@ -98,6 +98,17 @@ pub enum GatewayEvent {
         reason: String,
         failed_at: DateTime<Utc>,
     },
+    /// A call to a remote MCP server's tool and how it ended (AEGIS ADR-132
+    /// G1). `outcome` is `ok` or the refusal's R5 code. No argument, result or
+    /// credential.
+    RemoteToolInvoked {
+        execution_id: String,
+        tool_name: String,
+        acting: crate::domain::ActingIdentity,
+        outcome: String,
+        duration_ms: u64,
+        invoked_at: DateTime<Utc>,
+    },
     /// An operator-authenticated invocation RPC and who it acts for
     /// (AEGIS ADR-132 G2). Carries no argument and no credential.
     InvocationRequested {

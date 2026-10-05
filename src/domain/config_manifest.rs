@@ -34,6 +34,21 @@ pub struct SealGatewayConfigSpec {
     pub cli: GatewayCliConfig,
     #[serde(default)]
     pub ui: GatewayUiConfig,
+    /// Remote MCP servers, the gateway's third tool source (AEGIS ADR-132
+    /// G1), registered as data.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<GatewayMcpServerConfig>,
+}
+
+/// One remote MCP server: its name (the prefix of its tools' names) and its
+/// Streamable HTTP endpoint. It carries no credential: the acting user's own
+/// comes on each call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayMcpServerConfig {
+    pub name: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +273,9 @@ impl SealGatewayConfigManifest {
         resolve_env_option(&mut self.spec.cli.semantic_judge_url);
         resolve_env_option(&mut self.spec.cli.orchestrator_url);
         resolve_env_string(&mut self.spec.cli.nfs_server_host);
+        for server in &mut self.spec.mcp_servers {
+            resolve_env_string(&mut server.url);
+        }
     }
 
     pub fn discover_config() -> Option<PathBuf> {
@@ -631,6 +649,21 @@ spec:
         assert!(
             started_anyway.is_empty(),
             "the gateway starts with no value for {started_anyway:?}"
+        );
+    }
+
+    #[test]
+    fn reads_remote_mcp_servers() {
+        let yaml = "apiVersion: seal.100monkeys.ai/v1\nkind: SealGatewayConfig\nmetadata:\n  name: g\nspec:\n  mcp_servers:\n    - name: notes\n      url: https://mcp.example.test/api/mcp\n      description: A notes server\n";
+        let manifest: SealGatewayConfigManifest =
+            serde_yaml::from_str(yaml).expect("parse manifest");
+        assert_eq!(
+            manifest.spec.mcp_servers,
+            vec![GatewayMcpServerConfig {
+                name: "notes".to_string(),
+                url: "https://mcp.example.test/api/mcp".to_string(),
+                description: Some("A notes server".to_string()),
+            }]
         );
     }
 

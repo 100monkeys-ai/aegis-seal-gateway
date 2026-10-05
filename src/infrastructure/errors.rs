@@ -171,7 +171,16 @@ pub enum RefusalCode {
     /// The call carries a credential and the gRPC listener is plaintext
     /// (AEGIS ADR-132 H8): a deployment fault, never the caller's.
     CredentialChannelNotConfidential,
+    /// A remote server answered 401 or 403 to the credential it was given.
+    CredentialRejected,
     NotFound,
+    InvalidArguments,
+    /// A remote server answered a JSON-RPC error with no standard meaning;
+    /// its own text is the message.
+    RemoteToolError,
+    RateLimitExceeded,
+    UpstreamUnavailable,
+    ServiceUnavailable,
 }
 
 /// The gRPC metadata key holding a refusal's [`RefusalCode`].
@@ -182,15 +191,28 @@ impl RefusalCode {
         match self {
             Self::CredentialBindingRequired => "CREDENTIAL_BINDING_REQUIRED",
             Self::CredentialChannelNotConfidential => "CREDENTIAL_CHANNEL_NOT_CONFIDENTIAL",
+            Self::CredentialRejected => "CREDENTIAL_REJECTED",
             Self::NotFound => "NOT_FOUND",
+            Self::InvalidArguments => "INVALID_ARGUMENTS",
+            Self::RemoteToolError => "REMOTE_TOOL_ERROR",
+            Self::RateLimitExceeded => "RATE_LIMIT_EXCEEDED",
+            Self::UpstreamUnavailable => "UPSTREAM_UNAVAILABLE",
+            Self::ServiceUnavailable => "SERVICE_UNAVAILABLE",
         }
     }
 
     pub fn grpc_code(&self) -> tonic::Code {
         match self {
-            Self::CredentialBindingRequired => tonic::Code::PermissionDenied,
-            Self::CredentialChannelNotConfidential => tonic::Code::Unavailable,
+            Self::CredentialBindingRequired | Self::CredentialRejected => {
+                tonic::Code::PermissionDenied
+            }
+            Self::CredentialChannelNotConfidential
+            | Self::UpstreamUnavailable
+            | Self::ServiceUnavailable => tonic::Code::Unavailable,
             Self::NotFound => tonic::Code::NotFound,
+            Self::InvalidArguments => tonic::Code::InvalidArgument,
+            Self::RemoteToolError => tonic::Code::FailedPrecondition,
+            Self::RateLimitExceeded => tonic::Code::ResourceExhausted,
         }
     }
 }

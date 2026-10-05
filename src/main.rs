@@ -146,6 +146,19 @@ fn grpc_server_builder(
 /// `config` describes them. Returns the application state and the JTI
 /// repository, whose cleanup task `main` owns.
 async fn build_state(config: GatewayConfig) -> anyhow::Result<(AppState, Arc<dyn JtiRepository>)> {
+    build_state_dialling(
+        config,
+        application::remote_mcp::transport::AddressPolicy::PublicOnly,
+    )
+    .await
+}
+
+/// [`build_state`], with the address rule the remote MCP client dials under
+/// (production: public addresses only; the tests: their loopback server).
+async fn build_state_dialling(
+    config: GatewayConfig,
+    address_policy: application::remote_mcp::transport::AddressPolicy,
+) -> anyhow::Result<(AppState, Arc<dyn JtiRepository>)> {
     let (specs, workflows, cli_tools, seal_sessions, security_contexts, jti_repo, event_store): RepositoryBundle =
         if config.database_url.starts_with("postgres://")
             || config.database_url.starts_with("postgresql://")
@@ -207,10 +220,15 @@ async fn build_state(config: GatewayConfig) -> anyhow::Result<(AppState, Arc<dyn
         credential_resolver,
         event_store.clone(),
     );
+    let remote_mcp = Arc::new(application::RemoteMcpEngine::new(
+        config.mcp_servers.clone(),
+        application::remote_mcp::transport::McpHttpClient::new(address_policy)?,
+    ));
     let invocation = InvocationService::new(
         workflow_engine,
         cli_engine,
         native_tool_engine,
+        remote_mcp,
         cli_tools.clone(),
         seal_sessions.clone(),
         security_contexts.clone(),
@@ -688,15 +706,23 @@ mod grpc_tls_tests {
     struct Running {
         client: GatewayInvocationServiceClient<tonic::transport::Channel>,
         dir: std::path::PathBuf,
+        database_url: String,
     }
 
     /// Start the gateway's gRPC server on a loopback port, over TLS when
     /// `tls` is set, and connect a client that trusts the throwaway CA.
     async fn start(tls: bool) -> Running {
+        start_with(tls, Vec::new()).await
+    }
+
+    /// [`start`], with remote MCP servers registered (dialled under the
+    /// tests' loopback address rule).
+    async fn start_with(tls: bool, mcp_servers: Vec<domain::RemoteMcpServer>) -> Running {
         let dir = std::env::temp_dir().join(format!("gw-tls-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let url = format!("sqlite://{}", dir.join("gateway.db").display());
         let mut config = gateway_config_trusting_test_keys(&url);
+        config.mcp_servers = mcp_servers;
         let ca = if tls {
             let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
                 .expect("throwaway certificate");
@@ -712,7 +738,12 @@ mod grpc_tls_tests {
         } else {
             None
         };
-        let (state, _jti) = build_state(config.clone()).await.expect("build state");
+        let (state, _jti) = build_state_dialling(
+            config.clone(),
+            application::remote_mcp::transport::AddressPolicy::LoopbackForTests,
+        )
+        .await
+        .expect("build state");
         let mut server = grpc_server_builder(config.grpc_tls.as_ref()).expect("grpc server");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -745,6 +776,7 @@ mod grpc_tls_tests {
         Running {
             client: GatewayInvocationServiceClient::new(channel),
             dir,
+            database_url: url,
         }
     }
 
@@ -859,5 +891,182 @@ mod grpc_tls_tests {
             .err()
             .expect("refuses to start");
         assert!(err.to_string().contains("cert_path"), "{err}");
+    }
+
+    // The remote MCP source end to end: the orchestrator's client, the
+    // gateway's TLS gRPC server, a loopback MCP server.
+
+    use crate::application::remote_mcp::tests::loopback::Loopback;
+    use crate::application::remote_mcp::tests::CapturedLogs;
+
+    const MARKER: &str = "Mk7-end-to-end-credential-marker";
+
+    async fn with_loopback() -> (Loopback, Running) {
+        let loopback = Loopback::default();
+        loopback.accept(MARKER, &["echo", "custom-fail"]);
+        let url = loopback.start().await;
+        let server = domain::RemoteMcpServer::new("loop", &url, None).expect("server");
+        (loopback, start_with(true, vec![server]).await)
+    }
+
+    fn marker_credential() -> proto::ResolvedCredential {
+        proto::ResolvedCredential {
+            kind: proto::CredentialKind::BearerToken as i32,
+            value: MARKER.to_string(),
+        }
+    }
+
+    fn acting() -> proto::ActingIdentity {
+        proto::ActingIdentity {
+            user_id: "user-9".to_string(),
+            agent_id: "6c1f0e2a-0000-4000-8000-000000000009".to_string(),
+            workflow_id: String::new(),
+        }
+    }
+
+    fn call(tool: &str, credential: Option<proto::ResolvedCredential>) -> proto::InvokeToolRequest {
+        proto::InvokeToolRequest {
+            execution_id: "exec-e2e".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            acting: Some(acting()),
+            server: "loop".to_string(),
+            tool: tool.to_string(),
+            arguments_json: r#"{"q":"hello"}"#.to_string(),
+            credential,
+        }
+    }
+
+    async fn audit_text(url: &str) -> String {
+        let pool = sqlx::SqlitePool::connect(url).await.expect("audit db");
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT event_type, payload FROM gateway_events ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .expect("audit rows");
+        rows.into_iter()
+            .map(|(kind, payload)| format!("{kind} {payload}\n"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_call_with_the_users_credential_is_served() {
+        let (loopback, mut running) = with_loopback().await;
+        let response = running
+            .client
+            .invoke_tool(operator(call("echo", Some(marker_credential()))))
+            .await
+            .expect("served")
+            .into_inner();
+        let result: serde_json::Value = serde_json::from_str(&response.result_json).expect("json");
+        assert_eq!(result["content"][0]["text"], r#"{"q":"hello"}"#);
+        assert_eq!(loopback.count("tools/call"), 1);
+        let audit = audit_text(&running.database_url).await;
+        assert!(audit.contains("RemoteToolInvoked"), "{audit}");
+        assert!(audit.contains("\"outcome\":\"ok\""), "{audit}");
+        assert!(audit.contains("user-9"), "{audit}");
+        let _ = std::fs::remove_dir_all(running.dir);
+    }
+
+    #[tokio::test]
+    async fn a_call_without_a_credential_is_refused_before_any_request() {
+        // The orchestrator sends no credential when the user holds no binding
+        // granted to the acting agent (ADR-132 G3): the ungranted agent.
+        let (loopback, mut running) = with_loopback().await;
+        let status = running
+            .client
+            .invoke_tool(operator(call("echo", None)))
+            .await
+            .expect_err("refused");
+        assert_eq!(status.code(), tonic::Code::PermissionDenied);
+        assert_eq!(
+            refusal_code(&status).as_deref(),
+            Some("CREDENTIAL_BINDING_REQUIRED")
+        );
+        assert!(loopback.seen().is_empty(), "no request reached the server");
+        let _ = std::fs::remove_dir_all(running.dir);
+    }
+
+    #[tokio::test]
+    async fn the_listing_adds_each_bound_servers_tools_as_mcp() {
+        let (_loopback, mut running) = with_loopback().await;
+        let tools = running
+            .client
+            .list_tools(operator(proto::ListToolsRequest {
+                tenant_id: "tenant-a".to_string(),
+                acting: Some(acting()),
+                bound_servers: vec![proto::BoundServer {
+                    server: "loop".to_string(),
+                    credential: Some(marker_credential()),
+                }],
+            }))
+            .await
+            .expect("listed")
+            .into_inner()
+            .tools;
+        let names: Vec<(String, String)> = tools
+            .iter()
+            .map(|t| (t.name.clone(), t.kind.clone()))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("loop.echo".to_string(), "mcp".to_string()),
+                ("loop.custom-fail".to_string(), "mcp".to_string())
+            ]
+        );
+        let unbound = running
+            .client
+            .list_tools(operator(proto::ListToolsRequest {
+                acting: Some(acting()),
+                ..Default::default()
+            }))
+            .await
+            .expect("listed")
+            .into_inner()
+            .tools;
+        assert!(unbound.is_empty(), "no binding, no remote tools");
+        let _ = std::fs::remove_dir_all(running.dir);
+    }
+
+    #[tokio::test]
+    async fn the_credential_is_absent_from_logs_errors_and_audit_rows() {
+        let logs = CapturedLogs::default();
+        let _guard = tracing::subscriber::set_default(logs.subscriber());
+        let (_loopback, mut running) = with_loopback().await;
+
+        let mut seen = Vec::new();
+        for tool in ["echo", "custom-fail", "missing"] {
+            match running
+                .client
+                .invoke_tool(operator(call(tool, Some(marker_credential()))))
+                .await
+            {
+                Ok(response) => seen.push(response.into_inner().result_json),
+                Err(status) => seen.push(format!("{status:?}")),
+            }
+        }
+        let _ = running
+            .client
+            .list_tools(operator(proto::ListToolsRequest {
+                acting: Some(acting()),
+                bound_servers: vec![proto::BoundServer {
+                    server: "loop".to_string(),
+                    credential: Some(marker_credential()),
+                }],
+                ..Default::default()
+            }))
+            .await;
+        let audit = audit_text(&running.database_url).await;
+        tracing::info!("capture marker: the logs were captured");
+        let log_text = logs.text();
+
+        assert!(log_text.contains("capture marker"), "the capture works");
+        assert!(audit.contains("RemoteToolInvoked"), "the audit was written");
+        assert!(!log_text.contains("Mk7-"), "a credential reached the log");
+        assert!(!audit.contains("Mk7-"), "a credential reached an audit row");
+        for output in &seen {
+            assert!(!output.contains("Mk7-"), "a credential reached {output}");
+        }
+        let _ = std::fs::remove_dir_all(running.dir);
     }
 }

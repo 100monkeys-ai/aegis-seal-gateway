@@ -61,6 +61,25 @@ impl GatewayGrpcService {
     }
 }
 
+/// The credential the orchestrator resolved, as the gateway presents it. Only
+/// a bearer token is defined; anything else is the orchestrator's fault.
+#[allow(clippy::result_large_err)]
+fn bearer_credential(
+    credential: proto::ResolvedCredential,
+) -> Result<crate::domain::SensitiveString, Status> {
+    if credential.kind != proto::CredentialKind::BearerToken as i32 || credential.value.is_empty() {
+        tracing::error!(
+            kind = credential.kind,
+            "a resolved credential of no usable kind was refused"
+        );
+        return Err(refusal_status(
+            RefusalCode::ServiceUnavailable,
+            "This tool is not available right now.",
+        ));
+    }
+    Ok(crate::domain::SensitiveString::new(credential.value))
+}
+
 fn acting_identity(acting: proto::ActingIdentity) -> crate::domain::ActingIdentity {
     crate::domain::ActingIdentity::new(acting.user_id, acting.agent_id, acting.workflow_id)
 }
@@ -401,10 +420,27 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
             req.acting.clone(),
         )
         .await;
-        Err(internal(GatewayError::refused(
-            RefusalCode::NotFound,
-            format!("Not found: tool '{tool_name}'."),
-        )))
+        let arguments: Value = serde_json::from_str(&req.arguments_json)
+            .map_err(|e| Status::invalid_argument(format!("invalid arguments_json: {e}")))?;
+        let credential = req.credential.map(bearer_credential).transpose()?;
+        let acting = req.acting.map(acting_identity).unwrap_or_default();
+        let result = self
+            .state
+            .invocation_service
+            .invoke_remote_tool(
+                &req.execution_id,
+                &acting,
+                &req.server,
+                &req.tool,
+                arguments,
+                credential,
+            )
+            .await
+            .map_err(internal)?;
+        Ok(Response::new(proto::InvokeToolResponse {
+            result_json: serde_json::to_string(&result)
+                .map_err(|e| Status::internal(e.to_string()))?,
+        }))
     }
 
     async fn list_tools(
@@ -421,6 +457,28 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
                 .iter()
                 .any(|bound| bound.credential.is_some()),
         )?;
+        let listing = request.into_inner();
+        let acting = listing.acting.map(acting_identity).unwrap_or_default();
+        let mut bound = Vec::new();
+        for server in listing.bound_servers {
+            if let Some(credential) = server.credential {
+                bound.push((server.server, bearer_credential(credential)?));
+            }
+        }
+        let remote_tools = self
+            .state
+            .invocation_service
+            .list_remote_tools(&acting, bound)
+            .await
+            .into_iter()
+            .map(|tool| proto::ToolSummary {
+                name: tool.name,
+                description: tool.description,
+                kind: "mcp".to_string(),
+                input_schema_json: tool.input_schema.to_string(),
+                tags: vec!["mcp".to_string(), tool.server],
+                category: "external".to_string(),
+            });
         let workflows = self
             .state
             .workflows
@@ -495,7 +553,11 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
             });
 
         Ok(Response::new(proto::ListToolsResponse {
-            tools: workflows.chain(cli_tools).chain(native_tools).collect(),
+            tools: workflows
+                .chain(cli_tools)
+                .chain(native_tools)
+                .chain(remote_tools)
+                .collect(),
         }))
     }
 }
@@ -683,6 +745,7 @@ mod tests {
             nfs_mount_port: 20048,
             orchestrator_url: None,
             grpc_tls: None,
+            mcp_servers: Vec::new(),
         }
     }
 

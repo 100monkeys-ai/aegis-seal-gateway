@@ -3,6 +3,7 @@
 //! rule, and the credential absent from every log line, error and result.
 //! What H9 adds (nothing kept between calls) is in `stateless`.
 
+mod grounding;
 pub(crate) mod loopback;
 mod stateless;
 
@@ -99,7 +100,8 @@ async fn a_call_passes_its_arguments_and_result_through_unchanged() {
     let result = engine
         .call_tool("loop", &cred(ALICE), "echo", arguments.clone())
         .await
-        .expect("called");
+        .expect("called")
+        .result;
 
     let call = loopback
         .seen()
@@ -122,7 +124,8 @@ async fn an_event_stream_answer_is_read() {
     let result = engine
         .call_tool("loop", &cred(ALICE), "stream-echo", json!({"q": 1}))
         .await
-        .expect("called");
+        .expect("called")
+        .result;
     assert_eq!(result["content"][0]["text"], json!({"q": 1}).to_string());
 }
 
@@ -137,7 +140,7 @@ async fn errors_are_relayed_as_refusals_and_an_is_error_result_is_a_result() {
     let alice = cred(ALICE);
     let call = |tool: &'static str| engine.call_tool("loop", &alice, tool, json!({}));
 
-    let soft = call("soft-fail").await.expect("a result");
+    let soft = call("soft-fail").await.expect("a result").result;
     assert_eq!(soft["isError"], true);
 
     let missing = call("no-such-tool").await.unwrap_err();
@@ -268,7 +271,7 @@ async fn the_credential_is_never_in_a_log_line_an_error_or_a_result() {
             .call_tool("loop", &cred(ALICE), tool, json!({"q": "x"}))
             .await
         {
-            Ok(result) => outputs.push(result.to_string()),
+            Ok(answer) => outputs.push(answer.result.to_string()),
             Err(err) => outputs.push(format!("{err} {err:?}")),
         }
     }

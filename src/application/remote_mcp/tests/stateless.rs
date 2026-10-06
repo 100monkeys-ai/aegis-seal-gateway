@@ -30,6 +30,7 @@ async fn call(engine: &RemoteMcpEngine, token: &str, tool: &str) -> Result<Value
             json!({"q": "x"}),
         )
         .await
+        .map(|answer| answer.result)
 }
 
 /// What the loopback server saw, split into calls: each call opens with its

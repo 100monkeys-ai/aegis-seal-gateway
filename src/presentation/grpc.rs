@@ -438,8 +438,15 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
             .await
             .map_err(internal)?;
         Ok(Response::new(proto::InvokeToolResponse {
-            result_json: serde_json::to_string(&result)
+            result_json: serde_json::to_string(&result.result)
                 .map_err(|e| Status::internal(e.to_string()))?,
+            grounding_json: result
+                .grounding
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|e| Status::internal(e.to_string()))?
+                .unwrap_or_default(),
         }))
     }
 

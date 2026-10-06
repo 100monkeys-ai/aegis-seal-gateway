@@ -1107,4 +1107,79 @@ mod grpc_tls_tests {
         let _ = std::fs::remove_dir_all(a.dir);
         let _ = std::fs::remove_dir_all(b.dir);
     }
+
+    // AEGIS ADR-132 H9a: the `_grounding` a remote server answers on the
+    // call's `initialize` reaches the caller as `grounding_json`, never
+    // inside `result_json`.
+    #[tokio::test]
+    async fn the_grounding_an_initialize_answers_reaches_invoke_tool_as_grounding_json() {
+        let (loopback, mut running) = with_loopback().await;
+        let grounding = serde_json::json!({"you": {"instances": [{"slug": "acme", "id": "i-1"}]}});
+        loopback.answer_grounding(MARKER, grounding.clone());
+        let response = running
+            .client
+            .invoke_tool(operator(call("echo", Some(marker_credential()))))
+            .await
+            .expect("served")
+            .into_inner();
+        println!("grounding_json: {}", response.grounding_json);
+        println!("result_json: {}", response.result_json);
+        assert!(
+            !response.grounding_json.is_empty(),
+            "grounding_json carries the initialize's _grounding, got it empty"
+        );
+        let carried: serde_json::Value =
+            serde_json::from_str(&response.grounding_json).expect("grounding_json is JSON");
+        assert_eq!(
+            carried, grounding,
+            "grounding_json carries the initialize's _grounding"
+        );
+        assert!(
+            !response.result_json.contains("_grounding"),
+            "result_json never carries _grounding: {}",
+            response.result_json
+        );
+        let result: serde_json::Value = serde_json::from_str(&response.result_json).expect("json");
+        assert_eq!(result["content"][0]["text"], r#"{"q":"hello"}"#);
+        let _ = std::fs::remove_dir_all(running.dir);
+    }
+
+    #[tokio::test]
+    async fn no_grounding_or_a_null_one_leaves_grounding_json_empty() {
+        let (loopback, mut running) = with_loopback().await;
+        let none = running
+            .client
+            .invoke_tool(operator(call("echo", Some(marker_credential()))))
+            .await
+            .expect("served")
+            .into_inner();
+        println!("none answered: grounding_json {:?}", none.grounding_json);
+        assert_eq!(
+            none.grounding_json, "",
+            "no grounding answered leaves grounding_json empty"
+        );
+        loopback.answer_grounding(MARKER, serde_json::Value::Null);
+        let null = running
+            .client
+            .invoke_tool(operator(call("echo", Some(marker_credential()))))
+            .await
+            .expect("served")
+            .into_inner();
+        println!("null answered: grounding_json {:?}", null.grounding_json);
+        assert_eq!(
+            null.grounding_json, "",
+            "a null grounding leaves grounding_json empty"
+        );
+        assert!(
+            !none.result_json.contains("_grounding"),
+            "{}",
+            none.result_json
+        );
+        assert!(
+            !null.result_json.contains("_grounding"),
+            "{}",
+            null.result_json
+        );
+        let _ = std::fs::remove_dir_all(running.dir);
+    }
 }

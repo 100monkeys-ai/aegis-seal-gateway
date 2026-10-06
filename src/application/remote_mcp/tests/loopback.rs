@@ -9,6 +9,10 @@
 //! message echoing the caller's token), `limited` (HTTP 429), `crash`
 //! (HTTP 500), `lost-session` (HTTP 404, as a server that no longer knows
 //! the session would answer). An unknown tool answers -32601.
+//!
+//! A token may also be given a `_grounding` the server answers on
+//! `initialize` (AEGIS ADR-132 H9a), as Nuclear Notes answers the token's
+//! grounding there; `null` is answered as given.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -36,6 +40,8 @@ pub struct Seen {
 struct Inner {
     /// token -> the tool names that token sees.
     tools_by_token: HashMap<String, Vec<String>>,
+    /// token -> the `_grounding` its `initialize` answers.
+    grounding_by_token: HashMap<String, Value>,
     sessions: HashSet<String>,
     next_session: u64,
     seen: Vec<Seen>,
@@ -53,6 +59,15 @@ impl Loopback {
             token.to_string(),
             tools.iter().map(|t| t.to_string()).collect(),
         );
+    }
+
+    /// Answer `grounding` as `_grounding` on `initialize` for `token`.
+    pub fn answer_grounding(&self, token: &str, grounding: Value) {
+        self.inner
+            .lock()
+            .unwrap()
+            .grounding_by_token
+            .insert(token.to_string(), grounding);
     }
 
     pub fn seen(&self) -> Vec<Seen> {
@@ -135,7 +150,7 @@ async fn handle(State(server): State<Loopback>, headers: HeaderMap, body: String
         inner.next_session += 1;
         let sid = format!("loopback-session-{}", inner.next_session);
         inner.sessions.insert(sid.clone());
-        let body = json!({
+        let mut body = json!({
             "jsonrpc": "2.0",
             "id": id,
             "result": {
@@ -144,6 +159,9 @@ async fn handle(State(server): State<Loopback>, headers: HeaderMap, body: String
                 "serverInfo": {"name": "loopback", "version": "0"},
             },
         });
+        if let Some(grounding) = token.as_ref().and_then(|t| inner.grounding_by_token.get(t)) {
+            body["result"]["_grounding"] = grounding.clone();
+        }
         let mut response = Json(body).into_response();
         response
             .headers_mut()

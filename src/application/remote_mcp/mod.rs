@@ -39,10 +39,23 @@ pub struct RemoteTool {
     pub server: String,
 }
 
+/// What a tool call answers: the `tools/call` result unchanged, and the
+/// `_grounding` the server answered on that call's `initialize`, when it
+/// answered one that is not null (AEGIS ADR-132 H9a). The grounding is never
+/// folded into the result, which every agent's remote result carries, and
+/// never logged or audited here.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteCallAnswer {
+    pub result: Value,
+    pub grounding: Option<Value>,
+}
+
 /// What one call's handshake answered; it lives only as long as that call.
 struct Handshake {
     session_id: Option<String>,
     protocol_version: String,
+    /// The `initialize` result's `_grounding`, when present and not null.
+    grounding: Option<Value>,
     /// The JSON-RPC id of the next request on this handshake (`initialize`
     /// is 1).
     next_id: u64,
@@ -132,24 +145,29 @@ impl RemoteMcpEngine {
 
     /// Call `tool` on `server` with `arguments` unchanged, on a handshake of
     /// its own; answers the `tools/call` result unchanged (an `isError`
-    /// result included).
+    /// result included) beside the grounding that handshake answered.
     pub async fn call_tool(
         &self,
         server: &str,
         credential: &SensitiveString,
         tool: &str,
         arguments: Value,
-    ) -> Result<Value, GatewayError> {
+    ) -> Result<RemoteCallAnswer, GatewayError> {
         let registered = self.server(server)?;
         let mut handshake = self.handshake(registered, credential).await?;
-        self.request(
-            registered,
-            &mut handshake,
-            credential,
-            "tools/call",
-            json!({ "name": tool, "arguments": arguments }),
-        )
-        .await
+        let result = self
+            .request(
+                registered,
+                &mut handshake,
+                credential,
+                "tools/call",
+                json!({ "name": tool, "arguments": arguments }),
+            )
+            .await?;
+        Ok(RemoteCallAnswer {
+            result,
+            grounding: handshake.grounding,
+        })
     }
 
     fn server(&self, name: &str) -> Result<&RemoteMcpServer, GatewayError> {
@@ -235,6 +253,10 @@ impl RemoteMcpEngine {
         let handshake = Handshake {
             session_id,
             protocol_version: version.to_string(),
+            grounding: result
+                .get("_grounding")
+                .filter(|grounding| !grounding.is_null())
+                .cloned(),
             next_id: 2,
         };
         let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});

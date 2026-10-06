@@ -425,7 +425,7 @@ impl InvocationService {
         tool: &str,
         arguments: Value,
         credential: Option<SensitiveString>,
-    ) -> Result<Value, GatewayError> {
+    ) -> Result<crate::application::RemoteCallAnswer, GatewayError> {
         let tool_name = format!("{server}.{tool}");
         if !self.remote_mcp.is_registered(server) {
             return Err(GatewayError::refused(

@@ -1,13 +1,13 @@
-//! The remote MCP source against a loopback MCP server (AEGIS ADR-132 G1):
-//! sessions per binding, listing, calling, error relay, the session dropped
-//! and the credential forgotten, the address rule, and the credential absent
-//! from every log line, error and result.
+//! The remote MCP source against a loopback MCP server (AEGIS ADR-132 G1,
+//! H9): a handshake per call, listing, calling, error relay, the address
+//! rule, and the credential absent from every log line, error and result.
+//! What H9 adds (nothing kept between calls) is in `stateless`.
 
 pub(crate) mod loopback;
+mod stateless;
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use serde_json::json;
 
@@ -22,13 +22,12 @@ fn cred(value: &str) -> SensitiveString {
     SensitiveString::new(value)
 }
 
-async fn engine_on(loopback: &Loopback, idle: Duration) -> RemoteMcpEngine {
+async fn engine_on(loopback: &Loopback) -> RemoteMcpEngine {
     let url = loopback.start().await;
     let server = RemoteMcpServer::new("loop", &url, None).expect("server");
-    RemoteMcpEngine::with_idle(
+    RemoteMcpEngine::new(
         vec![server],
         McpHttpClient::new(AddressPolicy::LoopbackForTests).expect("client"),
-        idle,
     )
 }
 
@@ -40,30 +39,33 @@ fn code_of(err: &GatewayError) -> Option<RefusalCode> {
 }
 
 #[tokio::test]
-async fn a_binding_initializes_once_and_reuses_its_session() {
+async fn each_call_initializes_its_own_session() {
     let loopback = Loopback::default();
     loopback.accept(ALICE, &["echo"]);
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
+    let engine = engine_on(&loopback).await;
 
     for n in 0..3 {
         engine
-            .call_tool("loop", "alice", &cred(ALICE), "echo", json!({"n": n}))
+            .call_tool("loop", &cred(ALICE), "echo", json!({"n": n}))
             .await
             .expect("called");
     }
 
-    assert_eq!(loopback.count("initialize"), 1);
-    assert_eq!(loopback.count("notifications/initialized"), 1);
+    assert_eq!(loopback.count("initialize"), 3);
+    assert_eq!(loopback.count("notifications/initialized"), 3);
     let seen = loopback.seen();
-    let initialize = seen.iter().find(|s| s.method == "initialize").unwrap();
-    assert_eq!(initialize.session_id, None);
-    assert_eq!(initialize.params["protocolVersion"], "2025-11-25");
-    for later in seen.iter().filter(|s| s.method != "initialize") {
-        assert_eq!(later.session_id.as_deref(), Some("loopback-session-1"));
+    for initialize in seen.iter().filter(|s| s.method == "initialize") {
+        assert_eq!(initialize.session_id, None);
+        assert_eq!(initialize.params["protocolVersion"], "2025-11-25");
+    }
+    let calls: Vec<_> = seen.iter().filter(|s| s.method == "tools/call").collect();
+    assert_eq!(calls.len(), 3);
+    for (n, later) in calls.into_iter().enumerate() {
+        let session = format!("loopback-session-{}", n + 1);
+        assert_eq!(later.session_id.as_deref(), Some(session.as_str()));
         assert_eq!(later.protocol_version.as_deref(), Some("2025-11-25"));
         assert_eq!(later.token.as_deref(), Some(ALICE));
     }
-    assert_eq!(engine.session_count(), 1);
 }
 
 #[tokio::test]
@@ -71,35 +73,31 @@ async fn each_binding_lists_its_own_tools_under_the_servers_name() {
     let loopback = Loopback::default();
     loopback.accept(ALICE, &["echo", "pages.read"]);
     loopback.accept(BOB, &["echo"]);
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
+    let engine = engine_on(&loopback).await;
 
     let alice = engine
-        .list_tools("loop", "alice", &cred(ALICE))
+        .list_tools("loop", &cred(ALICE))
         .await
         .expect("listed");
-    let bob = engine
-        .list_tools("loop", "bob", &cred(BOB))
-        .await
-        .expect("listed");
+    let bob = engine.list_tools("loop", &cred(BOB)).await.expect("listed");
 
     let names = |tools: &[RemoteTool]| tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
     assert_eq!(names(&alice), vec!["loop.echo", "loop.pages.read"]);
     assert_eq!(names(&bob), vec!["loop.echo"]);
     assert_eq!(alice[0].description, "the echo tool");
     assert_eq!(alice[0].input_schema["properties"]["q"]["type"], "string");
-    assert_eq!(loopback.count("initialize"), 2, "one session per binding");
-    assert_eq!(engine.session_count(), 2);
+    assert_eq!(loopback.count("initialize"), 2, "one handshake per listing");
 }
 
 #[tokio::test]
 async fn a_call_passes_its_arguments_and_result_through_unchanged() {
     let loopback = Loopback::default();
     loopback.accept(ALICE, &["echo"]);
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
+    let engine = engine_on(&loopback).await;
     let arguments = json!({"q": "héllo", "nested": {"list": [1, 2.5, null, true]}});
 
     let result = engine
-        .call_tool("loop", "alice", &cred(ALICE), "echo", arguments.clone())
+        .call_tool("loop", &cred(ALICE), "echo", arguments.clone())
         .await
         .expect("called");
 
@@ -120,15 +118,9 @@ async fn a_call_passes_its_arguments_and_result_through_unchanged() {
 async fn an_event_stream_answer_is_read() {
     let loopback = Loopback::default();
     loopback.accept(ALICE, &["stream-echo"]);
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
+    let engine = engine_on(&loopback).await;
     let result = engine
-        .call_tool(
-            "loop",
-            "alice",
-            &cred(ALICE),
-            "stream-echo",
-            json!({"q": 1}),
-        )
+        .call_tool("loop", &cred(ALICE), "stream-echo", json!({"q": 1}))
         .await
         .expect("called");
     assert_eq!(result["content"][0]["text"], json!({"q": 1}).to_string());
@@ -141,9 +133,9 @@ async fn errors_are_relayed_as_refusals_and_an_is_error_result_is_a_result() {
         ALICE,
         &["soft-fail", "bad-args", "custom-fail", "limited", "crash"],
     );
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
+    let engine = engine_on(&loopback).await;
     let alice = cred(ALICE);
-    let call = |tool: &'static str| engine.call_tool("loop", "alice", &alice, tool, json!({}));
+    let call = |tool: &'static str| engine.call_tool("loop", &alice, tool, json!({}));
 
     let soft = call("soft-fail").await.expect("a result");
     assert_eq!(soft["isError"], true);
@@ -174,77 +166,17 @@ async fn errors_are_relayed_as_refusals_and_an_is_error_result_is_a_result() {
 async fn a_rejected_credential_is_refused_as_such() {
     let loopback = Loopback::default();
     loopback.accept(ALICE, &["echo"]);
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
+    let engine = engine_on(&loopback).await;
     let err = engine
-        .call_tool("loop", "bob", &cred(BOB), "echo", json!({}))
+        .call_tool("loop", &cred(BOB), "echo", json!({}))
         .await
         .unwrap_err();
     assert_eq!(code_of(&err), Some(RefusalCode::CredentialRejected));
     assert_eq!(
-        engine.session_count(),
+        loopback.count("tools/call"),
         0,
-        "no session for a refused credential"
+        "no tools/call reached the server"
     );
-}
-
-#[tokio::test]
-async fn a_session_the_server_forgot_is_replaced_once() {
-    let loopback = Loopback::default();
-    loopback.accept(ALICE, &["echo"]);
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
-    engine
-        .call_tool("loop", "alice", &cred(ALICE), "echo", json!({}))
-        .await
-        .expect("first");
-    loopback.forget_sessions();
-    engine
-        .call_tool("loop", "alice", &cred(ALICE), "echo", json!({}))
-        .await
-        .expect("second, on a new session");
-    assert_eq!(loopback.count("initialize"), 2);
-    let last = loopback.seen().into_iter().last().unwrap();
-    assert_eq!(last.session_id.as_deref(), Some("loopback-session-2"));
-}
-
-#[tokio::test]
-async fn an_idle_session_is_dropped_and_a_changed_credential_starts_a_new_one() {
-    let loopback = Loopback::default();
-    loopback.accept(ALICE, &["echo"]);
-    loopback.accept("Mk7-alice-rotated-credential", &["echo"]);
-    let engine = engine_on(&loopback, Duration::from_millis(200)).await;
-
-    engine
-        .call_tool("loop", "alice", &cred(ALICE), "echo", json!({}))
-        .await
-        .expect("called");
-    assert_eq!(engine.session_count(), 1);
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    engine
-        .call_tool("loop", "alice", &cred(ALICE), "echo", json!({}))
-        .await
-        .expect("called after idle");
-    assert_eq!(
-        loopback.count("initialize"),
-        2,
-        "the idle session was dropped"
-    );
-
-    engine
-        .call_tool(
-            "loop",
-            "alice",
-            &cred("Mk7-alice-rotated-credential"),
-            "echo",
-            json!({}),
-        )
-        .await
-        .expect("called with the new credential");
-    assert_eq!(
-        loopback.count("initialize"),
-        3,
-        "a changed credential re-initializes"
-    );
-    assert_eq!(engine.session_count(), 1, "the old session is gone");
 }
 
 #[tokio::test]
@@ -257,7 +189,7 @@ async fn a_private_address_is_refused_under_the_production_rule() {
         McpHttpClient::new(AddressPolicy::PublicOnly).expect("client"),
     );
     let err = engine
-        .call_tool("loop", "alice", &cred(ALICE), "echo", json!({}))
+        .call_tool("loop", &cred(ALICE), "echo", json!({}))
         .await
         .unwrap_err();
     assert_eq!(code_of(&err), Some(RefusalCode::ServiceUnavailable));
@@ -267,9 +199,9 @@ async fn a_private_address_is_refused_under_the_production_rule() {
 #[tokio::test]
 async fn an_unregistered_server_is_not_found() {
     let loopback = Loopback::default();
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
+    let engine = engine_on(&loopback).await;
     let err = engine
-        .call_tool("other", "alice", &cred(ALICE), "echo", json!({}))
+        .call_tool("other", &cred(ALICE), "echo", json!({}))
         .await
         .unwrap_err();
     assert_eq!(code_of(&err), Some(RefusalCode::NotFound));
@@ -321,7 +253,7 @@ async fn the_credential_is_never_in_a_log_line_an_error_or_a_result() {
             "crash",
         ],
     );
-    let engine = engine_on(&loopback, SESSION_IDLE).await;
+    let engine = engine_on(&loopback).await;
     let mut outputs = Vec::new();
     for tool in [
         "echo",
@@ -333,7 +265,7 @@ async fn the_credential_is_never_in_a_log_line_an_error_or_a_result() {
         "nope",
     ] {
         match engine
-            .call_tool("loop", "alice", &cred(ALICE), tool, json!({"q": "x"}))
+            .call_tool("loop", &cred(ALICE), tool, json!({"q": "x"}))
             .await
         {
             Ok(result) => outputs.push(result.to_string()),
@@ -341,12 +273,12 @@ async fn the_credential_is_never_in_a_log_line_an_error_or_a_result() {
         }
     }
     let listed = engine
-        .list_tools("loop", "alice", &cred(ALICE))
+        .list_tools("loop", &cred(ALICE))
         .await
         .expect("listed");
     outputs.push(format!("{listed:?}"));
     let rejected = engine
-        .call_tool("loop", "bob", &cred(BOB), "echo", json!({}))
+        .call_tool("loop", &cred(BOB), "echo", json!({}))
         .await
         .unwrap_err();
     outputs.push(format!("{rejected} {rejected:?}"));

@@ -1,27 +1,22 @@
 //! Remote MCP servers as a tool source (AEGIS ADR-132 G1, G5, G6).
 //!
-//! **Sessions.** One MCP session per binding: per (server, acting user). It
-//! is initialized once (`initialize`, then `notifications/initialized`), its
-//! `MCP-Session-Id` kept and sent on every later call, so consecutive calls
-//! reuse it (ADR-132 G1's "batch", read under correction C3: MCP 2025-11-25
-//! has no JSON-RPC batching). A session is dropped, and the next call
-//! initializes a new one, when it has been idle for [`SESSION_IDLE`], when the
-//! server answers 404 to its id (the specification's "start a new session"),
-//! or when the call brings a different credential for the same binding.
+//! **No session is kept (ADR-132 H9).** The gateway holds nothing about a
+//! remote server between calls: each tool call, and each listing, is its own
+//! handshake (`initialize`, then `notifications/initialized`) followed by the
+//! request, and everything the handshake answered is dropped when the call
+//! returns. The `MCP-Session-Id` the server answers on `initialize` is sent on
+//! that call's later messages and then forgotten, and so is the protocol
+//! version it answered. Gateway replicas therefore share no state and are
+//! balanced blindly. A per-replica cache may only ever be an optimisation
+//! that correctness never needs; there is none.
 //!
 //! **The credential.** It arrives on each call, resolved by the orchestrator,
 //! and lives only as long as that call: it is a parameter here, sent as
-//! `Authorization: Bearer` and dropped when the call returns. The session
-//! keeps no copy of it, only a 64-bit digest under a key chosen at random
-//! when the gateway starts, to tell a changed credential; the digest goes
-//! with the session. Nothing here logs, stores or relays it: a server's
-//! error text is relayed with any occurrence of it replaced.
+//! `Authorization: Bearer` and dropped when the call returns. Nothing here
+//! logs, stores or relays it: a server's error text is relayed with any
+//! occurrence of it replaced.
 
 use std::collections::HashMap;
-use std::hash::BuildHasher;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -31,8 +26,6 @@ pub mod transport;
 
 use self::transport::{McpHttpClient, McpReply, McpTransportError};
 
-/// How long an unused session is kept.
-pub const SESSION_IDLE: Duration = Duration::from_secs(15 * 60);
 const MAX_LIST_PAGES: usize = 50;
 const MAX_RELAYED_MESSAGE: usize = 1000;
 
@@ -46,43 +39,36 @@ pub struct RemoteTool {
     pub server: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct SessionKey {
-    server: String,
-    user_id: String,
+/// What one call's handshake answered; it lives only as long as that call.
+struct Handshake {
+    session_id: Option<String>,
+    protocol_version: String,
+    /// The JSON-RPC id of the next request on this handshake (`initialize`
+    /// is 1).
+    next_id: u64,
 }
 
-struct Session {
-    id: Option<String>,
-    credential_digest: u64,
-    last_used: Instant,
+impl Handshake {
+    fn next_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
 }
 
 pub struct RemoteMcpEngine {
     servers: HashMap<String, RemoteMcpServer>,
     client: McpHttpClient,
-    sessions: Mutex<HashMap<SessionKey, Session>>,
-    digest_key: std::collections::hash_map::RandomState,
-    next_id: AtomicU64,
-    idle: Duration,
 }
 
 impl RemoteMcpEngine {
     pub fn new(servers: Vec<RemoteMcpServer>, client: McpHttpClient) -> Self {
-        Self::with_idle(servers, client, SESSION_IDLE)
-    }
-
-    pub fn with_idle(servers: Vec<RemoteMcpServer>, client: McpHttpClient, idle: Duration) -> Self {
         Self {
             servers: servers
                 .into_iter()
                 .map(|server| (server.name.clone(), server))
                 .collect(),
             client,
-            sessions: Mutex::new(HashMap::new()),
-            digest_key: Default::default(),
-            next_id: AtomicU64::new(1),
-            idle,
         }
     }
 
@@ -90,15 +76,16 @@ impl RemoteMcpEngine {
         self.servers.contains_key(server)
     }
 
-    /// The tools `server` shows this user (its list depends on the user's
-    /// credential), named `<server>.<tool>`.
+    /// The tools `server` shows the holder of `credential` (its list depends
+    /// on the credential), named `<server>.<tool>`: one handshake, its pages
+    /// on it.
     pub async fn list_tools(
         &self,
         server: &str,
-        user_id: &str,
         credential: &SensitiveString,
     ) -> Result<Vec<RemoteTool>, GatewayError> {
         let registered = self.server(server)?;
+        let mut handshake = self.handshake(registered, credential).await?;
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..MAX_LIST_PAGES {
@@ -107,7 +94,7 @@ impl RemoteMcpEngine {
                 None => json!({}),
             };
             let result = self
-                .request(registered, user_id, credential, "tools/list", params)
+                .request(registered, &mut handshake, credential, "tools/list", params)
                 .await?;
             for tool in result
                 .get("tools")
@@ -143,31 +130,26 @@ impl RemoteMcpEngine {
         Ok(tools)
     }
 
-    /// Call `tool` on `server` with `arguments` unchanged; answers the
-    /// `tools/call` result unchanged (an `isError` result included).
+    /// Call `tool` on `server` with `arguments` unchanged, on a handshake of
+    /// its own; answers the `tools/call` result unchanged (an `isError`
+    /// result included).
     pub async fn call_tool(
         &self,
         server: &str,
-        user_id: &str,
         credential: &SensitiveString,
         tool: &str,
         arguments: Value,
     ) -> Result<Value, GatewayError> {
         let registered = self.server(server)?;
+        let mut handshake = self.handshake(registered, credential).await?;
         self.request(
             registered,
-            user_id,
+            &mut handshake,
             credential,
             "tools/call",
             json!({ "name": tool, "arguments": arguments }),
         )
         .await
-    }
-
-    /// Sessions currently held; for tests of when a session is dropped.
-    #[cfg(test)]
-    pub(crate) fn session_count(&self) -> usize {
-        self.sessions.lock().map(|s| s.len()).unwrap_or(0)
     }
 
     fn server(&self, name: &str) -> Result<&RemoteMcpServer, GatewayError> {
@@ -179,78 +161,45 @@ impl RemoteMcpEngine {
         })
     }
 
-    fn message_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
-    }
-
-    /// One request on the binding's session; a session the server no longer
-    /// knows (404) is replaced once.
+    /// One request on `handshake`. A 404 is the server's answer, relayed as
+    /// a refusal: nothing is retried, since nothing was kept to go stale.
     async fn request(
         &self,
         server: &RemoteMcpServer,
-        user_id: &str,
+        handshake: &mut Handshake,
         credential: &SensitiveString,
         method: &str,
         params: Value,
     ) -> Result<Value, GatewayError> {
-        let key = SessionKey {
-            server: server.name.clone(),
-            user_id: user_id.to_string(),
-        };
-        let mut replaced = false;
-        loop {
-            let session_id = self.ensure_session(server, &key, credential).await?;
-            let message = json!({
-                "jsonrpc": "2.0",
-                "id": self.message_id(),
-                "method": method,
-                "params": params,
-            });
-            let reply = self
-                .client
-                .send(
-                    &server.url,
-                    session_id.as_deref(),
-                    true,
-                    credential,
-                    &message,
-                )
-                .await
-                .map_err(|e| transport_refusal(server, &e))?;
-            if reply.status == 404 && session_id.is_some() && !replaced {
-                self.drop_session(&key);
-                replaced = true;
-                continue;
-            }
-            self.touch(&key);
-            return answer(server, credential, reply);
-        }
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": handshake.next_id(),
+            "method": method,
+            "params": params,
+        });
+        let reply = self
+            .client
+            .send(
+                &server.url,
+                handshake.session_id.as_deref(),
+                Some(&handshake.protocol_version),
+                credential,
+                &message,
+            )
+            .await
+            .map_err(|e| transport_refusal(server, &e))?;
+        answer(server, credential, reply)
     }
 
-    /// The binding's session id, initializing a session when there is none
-    /// to reuse.
-    async fn ensure_session(
+    /// `initialize` and `notifications/initialized`, for one call.
+    async fn handshake(
         &self,
         server: &RemoteMcpServer,
-        key: &SessionKey,
         credential: &SensitiveString,
-    ) -> Result<Option<String>, GatewayError> {
-        let digest = self.digest_key.hash_one(credential.expose());
-        {
-            let mut sessions = self.lock_sessions();
-            let idle = self.idle;
-            sessions.retain(|_, session| session.last_used.elapsed() < idle);
-            if let Some(session) = sessions.get(key) {
-                if session.credential_digest == digest {
-                    return Ok(session.id.clone());
-                }
-            }
-            sessions.remove(key);
-        }
-
+    ) -> Result<Handshake, GatewayError> {
         let initialize = json!({
             "jsonrpc": "2.0",
-            "id": self.message_id(),
+            "id": 1,
             "method": "initialize",
             "params": {
                 "protocolVersion": self::transport::MCP_PROTOCOL_VERSION,
@@ -263,7 +212,7 @@ impl RemoteMcpEngine {
         });
         let reply = self
             .client
-            .send(&server.url, None, false, credential, &initialize)
+            .send(&server.url, None, None, credential, &initialize)
             .await
             .map_err(|e| transport_refusal(server, &e))?;
         let session_id = reply.session_id.clone();
@@ -283,13 +232,18 @@ impl RemoteMcpEngine {
                 "This tool is not available right now.",
             ));
         }
+        let handshake = Handshake {
+            session_id,
+            protocol_version: version.to_string(),
+            next_id: 2,
+        };
         let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
         let ack = self
             .client
             .send(
                 &server.url,
-                session_id.as_deref(),
-                true,
+                handshake.session_id.as_deref(),
+                Some(&handshake.protocol_version),
                 credential,
                 &initialized,
             )
@@ -298,32 +252,7 @@ impl RemoteMcpEngine {
         if !(200..300).contains(&ack.status) {
             answer(server, credential, ack)?;
         }
-
-        self.lock_sessions().insert(
-            key.clone(),
-            Session {
-                id: session_id.clone(),
-                credential_digest: digest,
-                last_used: Instant::now(),
-            },
-        );
-        Ok(session_id)
-    }
-
-    fn touch(&self, key: &SessionKey) {
-        if let Some(session) = self.lock_sessions().get_mut(key) {
-            session.last_used = Instant::now();
-        }
-    }
-
-    fn drop_session(&self, key: &SessionKey) {
-        self.lock_sessions().remove(key);
-    }
-
-    fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<SessionKey, Session>> {
-        self.sessions
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        Ok(handshake)
     }
 }
 

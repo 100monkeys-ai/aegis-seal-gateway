@@ -7,7 +7,8 @@
 //! as an event stream with a notification first), `soft-fail` (an `isError`
 //! result), `bad-args` (JSON-RPC -32602), `custom-fail` (JSON-RPC -32042, its
 //! message echoing the caller's token), `limited` (HTTP 429), `crash`
-//! (HTTP 500). An unknown tool answers -32601.
+//! (HTTP 500), `lost-session` (HTTP 404, as a server that no longer knows
+//! the session would answer). An unknown tool answers -32601.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -52,11 +53,6 @@ impl Loopback {
             token.to_string(),
             tools.iter().map(|t| t.to_string()).collect(),
         );
-    }
-
-    /// Forget every session: the next request carrying one answers 404.
-    pub fn forget_sessions(&self) {
-        self.inner.lock().unwrap().sessions.clear();
     }
 
     pub fn seen(&self) -> Vec<Seen> {
@@ -206,6 +202,7 @@ async fn handle(State(server): State<Loopback>, headers: HeaderMap, body: String
                 )
                     .into_response(),
                 "crash" => (StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response(),
+                "lost-session" => StatusCode::NOT_FOUND.into_response(),
                 _ => rpc_error(&id, -32601, "Unknown tool"),
             }
         }

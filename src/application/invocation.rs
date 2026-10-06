@@ -453,7 +453,7 @@ impl InvocationService {
         let started = Instant::now();
         let result = self
             .remote_mcp
-            .call_tool(server, &acting.user_id, &credential, tool, arguments)
+            .call_tool(server, &credential, tool, arguments)
             .await;
         drop(credential);
         let outcome = match &result {
@@ -483,12 +483,11 @@ impl InvocationService {
         result
     }
 
-    /// The tools of each bound remote MCP server, as each shows `acting`
-    /// with that user's credential (AEGIS ADR-132 G5). A server that is not
+    /// The tools of each bound remote MCP server, as each shows the holder
+    /// of that server's credential (AEGIS ADR-132 G5). A server that is not
     /// registered or fails to list is left out and logged.
     pub async fn list_remote_tools(
         &self,
-        acting: &ActingIdentity,
         bound: Vec<(String, SensitiveString)>,
     ) -> Vec<RemoteTool> {
         let mut tools = Vec::new();
@@ -497,11 +496,7 @@ impl InvocationService {
                 tracing::warn!(server = %server, "a bound server is not registered here");
                 continue;
             }
-            match self
-                .remote_mcp
-                .list_tools(&server, &acting.user_id, &credential)
-                .await
-            {
+            match self.remote_mcp.list_tools(&server, &credential).await {
                 Ok(listed) => tools.extend(listed),
                 Err(err) => {
                     let code = match &err {

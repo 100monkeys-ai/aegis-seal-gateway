@@ -458,7 +458,6 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
                 .any(|bound| bound.credential.is_some()),
         )?;
         let listing = request.into_inner();
-        let acting = listing.acting.map(acting_identity).unwrap_or_default();
         let mut bound = Vec::new();
         for server in listing.bound_servers {
             if let Some(credential) = server.credential {
@@ -468,7 +467,7 @@ impl proto::gateway_invocation_service_server::GatewayInvocationService for Gate
         let remote_tools = self
             .state
             .invocation_service
-            .list_remote_tools(&acting, bound)
+            .list_remote_tools(bound)
             .await
             .into_iter()
             .map(|tool| proto::ToolSummary {

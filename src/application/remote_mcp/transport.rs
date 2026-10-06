@@ -122,13 +122,14 @@ impl McpHttpClient {
         }
     }
 
-    /// POST one JSON-RPC message. `negotiated` adds `MCP-Protocol-Version`
-    /// (every message after `initialize`).
+    /// POST one JSON-RPC message. `protocol_version`, the version the
+    /// server answered on `initialize`, is sent as `MCP-Protocol-Version` on
+    /// every message after it.
     pub async fn send(
         &self,
         url: &url::Url,
         session_id: Option<&str>,
-        negotiated: bool,
+        protocol_version: Option<&str>,
         credential: &SensitiveString,
         message: &Value,
     ) -> Result<McpReply, McpTransportError> {
@@ -143,8 +144,8 @@ impl McpHttpClient {
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .bearer_auth(credential.expose())
             .body(message.to_string());
-        if negotiated {
-            request = request.header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION);
+        if let Some(version) = protocol_version {
+            request = request.header("MCP-Protocol-Version", version);
         }
         if let Some(id) = session_id {
             request = request.header("MCP-Session-Id", id);

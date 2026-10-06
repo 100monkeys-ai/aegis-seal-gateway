@@ -1069,4 +1069,42 @@ mod grpc_tls_tests {
         }
         let _ = std::fs::remove_dir_all(running.dir);
     }
+
+    // AEGIS ADR-132 H9: the gateway keeps no session to a remote server, so
+    // two gateways that share nothing serve one person's calls in any order,
+    // each call its own initialize, notifications/initialized, tools/call.
+    #[tokio::test]
+    async fn two_gateways_with_no_shared_state_each_serve_calls_over_grpc() {
+        let loopback = Loopback::default();
+        loopback.accept(MARKER, &["echo"]);
+        let url = loopback.start().await;
+        let server = || domain::RemoteMcpServer::new("loop", &url, None).expect("server");
+        let mut a = start_with(true, vec![server()]).await;
+        let mut b = start_with(true, vec![server()]).await;
+
+        for n in 0..4 {
+            let running = if n % 2 == 0 { &mut a } else { &mut b };
+            let response = running
+                .client
+                .invoke_tool(operator(call("echo", Some(marker_credential()))))
+                .await;
+            assert!(response.is_ok(), "call {n} was served: {response:?}");
+        }
+
+        let mut shapes: Vec<Vec<String>> = Vec::new();
+        for seen in loopback.seen() {
+            if seen.method == "initialize" || shapes.is_empty() {
+                shapes.push(Vec::new());
+            }
+            shapes.last_mut().unwrap().push(seen.method);
+        }
+        let one_call = ["initialize", "notifications/initialized", "tools/call"].map(String::from);
+        assert_eq!(
+            shapes,
+            vec![one_call.to_vec(); 4],
+            "each call is its own initialize, notifications/initialized, tools/call"
+        );
+        let _ = std::fs::remove_dir_all(a.dir);
+        let _ = std::fs::remove_dir_all(b.dir);
+    }
 }

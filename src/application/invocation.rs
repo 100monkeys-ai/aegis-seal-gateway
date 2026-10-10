@@ -519,8 +519,8 @@ impl InvocationService {
 }
 
 fn tool_pattern_matches(pattern: &str, tool_name: &str) -> bool {
-    if pattern == "*" {
-        return true;
+    if pattern == "*" || pattern.ends_with(".*") {
+        return crate::domain::security_context::matches_pattern(pattern, tool_name);
     }
     if let Some((prefix, suffix)) = pattern.split_once('*') {
         return tool_name.starts_with(prefix) && tool_name.ends_with(suffix);
@@ -586,4 +586,17 @@ fn parse_fsal_mounts(args: &Value) -> Result<Vec<CliFsalMount>, GatewayError> {
         ));
     }
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tool_pattern_tests {
+    use super::tool_pattern_matches;
+
+    #[test]
+    fn test_session_family_pattern_refuses_its_bare_prefix_and_dot() {
+        assert!(tool_pattern_matches("fs.*", "fs.read"));
+        assert!(!tool_pattern_matches("fs.*", "fs."));
+        assert!(!tool_pattern_matches("fs.*", "fs"));
+        assert!(!tool_pattern_matches("fs.*", "fsx.read"));
+    }
 }

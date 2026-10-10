@@ -251,14 +251,7 @@ impl Capability {
     }
 
     fn matches_tool(&self, tool_name: &str) -> bool {
-        if self.tool_pattern == "*" {
-            return true;
-        }
-        if self.tool_pattern.ends_with(".*") {
-            let prefix = self.tool_pattern.trim_end_matches(".*");
-            return tool_name.starts_with(prefix);
-        }
-        tool_name == self.tool_pattern
+        matches_pattern(&self.tool_pattern, tool_name)
     }
 
     fn path_in_allowlist(&self, path: &str, allowlist: &[PathBuf]) -> bool {
@@ -343,16 +336,23 @@ impl SecurityContext {
     }
 }
 
-/// Pattern matching for deny-list entries.
-fn matches_pattern(pattern: &str, tool_name: &str) -> bool {
+/// Tool-name pattern matching, shared by capabilities and deny-list entries.
+///
+/// `*` matches every name; `<prefix>.*` matches `<prefix>`, a dot, then at
+/// least one more character (so `fs.*` admits `fs.read` and refuses
+/// `fsx.read`, `fs.` and `fs`), as the orchestrator's matcher does; any other
+/// pattern matches only the identical name.
+pub(crate) fn matches_pattern(pattern: &str, tool_name: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if pattern.ends_with(".*") {
-        let prefix = pattern.trim_end_matches(".*");
-        return tool_name.starts_with(prefix);
+    match pattern.strip_suffix(".*") {
+        Some(prefix) => tool_name
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|tool| !tool.is_empty()),
+        None => pattern == tool_name,
     }
-    pattern == tool_name
 }
 
 #[cfg(test)]
@@ -456,6 +456,55 @@ mod tests {
             ctx.evaluate("fs.delete", &json!({"path": "/workspace/test.txt"})),
             Err(PolicyViolation::ToolDenied { .. })
         ));
+    }
+
+    #[test]
+    fn test_family_pattern_refuses_a_name_sharing_its_prefix_without_the_dot() {
+        let cap = Capability {
+            tool_pattern: "fs.*".to_string(),
+            path_allowlist: None,
+            command_allowlist: None,
+            subcommand_allowlist: None,
+            domain_allowlist: None,
+            max_response_size: None,
+            rate_limit: None,
+        };
+        assert!(cap.matches_tool_name("fs.read"));
+        assert!(cap.allows("fs.read", &json!({})).is_ok());
+        assert!(!cap.matches_tool_name("fsx.read"));
+        assert!(!cap.matches_tool_name("fs."));
+        assert!(!cap.matches_tool_name("fs"));
+        assert!(matches!(
+            cap.allows("fsx.read", &json!({})),
+            Err(PolicyViolation::ToolNotAllowed { .. })
+        ));
+    }
+
+    #[test]
+    fn test_deny_list_family_pattern_refuses_only_names_past_its_dot() {
+        let ctx = SecurityContext {
+            name: "test".to_string(),
+            capabilities: vec![Capability {
+                tool_pattern: "*".to_string(),
+                path_allowlist: None,
+                command_allowlist: None,
+                subcommand_allowlist: None,
+                domain_allowlist: None,
+                max_response_size: None,
+                rate_limit: None,
+            }],
+            deny_list: vec!["fs.*".to_string()],
+            description: String::new(),
+            tenant_id: None,
+        };
+
+        assert!(matches!(
+            ctx.evaluate("fs.read", &json!({})),
+            Err(PolicyViolation::ToolDenied { .. })
+        ));
+        assert!(ctx.evaluate("fsx.read", &json!({})).is_ok());
+        assert!(ctx.evaluate("fs.", &json!({})).is_ok());
+        assert!(ctx.evaluate("fs", &json!({})).is_ok());
     }
 
     #[test]

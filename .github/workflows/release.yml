@@ -43,7 +43,7 @@ jobs:
           path: aegis-proto
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12; toolchain pinned by rust-toolchain.toml and the input below
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master @ 2026-09-12; toolchain pinned by rust-toolchain.toml and the input below
         with:
           toolchain: "1.98.1"
           targets: x86_64-unknown-linux-gnu
@@ -63,7 +63,7 @@ jobs:
           mv target/release/aegis-seal-gateway-linux-x86_64.tar.gz .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aegis-seal-gateway-linux-x86_64
           path: aegis-seal-gateway/aegis-seal-gateway-linux-x86_64.tar.gz
@@ -90,7 +90,7 @@ jobs:
           path: aegis-proto
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master @ 2026-09-12; toolchain pinned by rust-toolchain.toml and the input below
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master @ 2026-09-12; toolchain pinned by rust-toolchain.toml and the input below
         with:
           toolchain: "1.98.1"
           targets: aarch64-apple-darwin
@@ -110,7 +110,7 @@ jobs:
           mv target/aarch64-apple-darwin/release/aegis-seal-gateway-macos-aarch64.tar.gz .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aegis-seal-gateway-macos-aarch64
           path: aegis-seal-gateway/aegis-seal-gateway-macos-aarch64.tar.gz
@@ -126,7 +126,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download all artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
 

@@ -25,6 +25,20 @@ jobs:
   verify:
     name: Verify build and tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: seal_gateway_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: aegis-seal-gateway
@@ -59,6 +73,8 @@ jobs:
         run: cargo build --locked
 
       - name: Run tests
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/seal_gateway_test
         run: cargo test --locked
 
   publish:

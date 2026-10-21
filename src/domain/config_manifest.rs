@@ -234,7 +234,7 @@ impl Default for GatewayUiConfig {
 impl SealGatewayConfigManifest {
     pub fn from_yaml_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let mut config: Self = serde_yaml::from_str(&content)?;
+        let mut config: Self = serde_norway::from_str(&content)?;
         config.resolve_env_refs();
         Ok(config)
     }
@@ -598,7 +598,7 @@ spec:
     enabled: true
 "#;
         let manifest: SealGatewayConfigManifest =
-            serde_yaml::from_str(yaml).expect("parse manifest");
+            serde_norway::from_str(yaml).expect("parse manifest");
         assert_eq!(manifest.kind, "SealGatewayConfig");
         assert_eq!(manifest.metadata.name, "test-gateway");
     }
@@ -624,7 +624,7 @@ spec:
         let yaml = format!(
             "apiVersion: seal.100monkeys.ai/v1\nkind: SealGatewayConfig\nmetadata:\n  name: test-gateway\nspec:\n  auth:\n{auth}"
         );
-        serde_yaml::from_str(&yaml).expect("parse manifest")
+        serde_norway::from_str(&yaml).expect("parse manifest")
     }
 
     // Security audit 005, fail closed on configuration: a gateway that has not
@@ -656,7 +656,7 @@ spec:
     fn reads_remote_mcp_servers() {
         let yaml = "apiVersion: seal.100monkeys.ai/v1\nkind: SealGatewayConfig\nmetadata:\n  name: g\nspec:\n  mcp_servers:\n    - name: notes\n      url: https://mcp.example.test/api/mcp\n      description: A notes server\n";
         let manifest: SealGatewayConfigManifest =
-            serde_yaml::from_str(yaml).expect("parse manifest");
+            serde_norway::from_str(yaml).expect("parse manifest");
         assert_eq!(
             manifest.spec.mcp_servers,
             vec![GatewayMcpServerConfig {
@@ -671,7 +671,7 @@ spec:
     fn reads_the_grpc_listeners_tls_paths() {
         let yaml = "apiVersion: seal.100monkeys.ai/v1\nkind: SealGatewayConfig\nmetadata:\n  name: g\nspec:\n  network:\n    grpc_tls:\n      cert_path: /etc/aegis/tls/seal-gateway.crt\n      key_path: env:GW_TEST_GRPC_TLS_KEY_PATH\n";
         let mut manifest: SealGatewayConfigManifest =
-            serde_yaml::from_str(yaml).expect("parse manifest");
+            serde_norway::from_str(yaml).expect("parse manifest");
         std::env::set_var(
             "GW_TEST_GRPC_TLS_KEY_PATH",
             "/etc/aegis/tls/seal-gateway.key",
@@ -684,7 +684,7 @@ spec:
                 key_path: "/etc/aegis/tls/seal-gateway.key".to_string(),
             })
         );
-        let plain: SealGatewayConfigManifest = serde_yaml::from_str(
+        let plain: SealGatewayConfigManifest = serde_norway::from_str(
             "apiVersion: seal.100monkeys.ai/v1\nkind: SealGatewayConfig\nmetadata:\n  name: g\nspec: {}\n",
         )
         .expect("parse manifest");

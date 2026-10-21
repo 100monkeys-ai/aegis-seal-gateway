@@ -11,7 +11,7 @@
 //! the session would answer). An unknown tool answers -32601.
 //!
 //! A token may also be given a `_grounding` the server answers on
-//! `initialize` (AEGIS ADR-132 H9a), as Nuclear Notes answers the token's
+//! `initialize` (AEGIS ADR-132 H9a), as Carbon Forge answers the token's
 //! grounding there; `null` is answered as given.
 
 use std::collections::{HashMap, HashSet};

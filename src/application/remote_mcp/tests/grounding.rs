@@ -1,6 +1,6 @@
 //! The `_grounding` a remote server answers on a call's `initialize` reaches
 //! the caller beside the `tools/call` result, never inside it (AEGIS ADR-132
-//! H9a): Nuclear Notes answers the token's grounding there.
+//! H9a): Carbon Forge answers the token's grounding there.
 
 use serde_json::{json, Value};
 

@@ -3,6 +3,7 @@
 //! rule, and the credential absent from every log line, error and result.
 //! What H9 adds (nothing kept between calls) is in `stateless`.
 
+mod error_kind_retry;
 mod grounding;
 pub(crate) mod loopback;
 mod stateless;

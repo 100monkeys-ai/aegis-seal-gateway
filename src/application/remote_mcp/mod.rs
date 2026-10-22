@@ -15,8 +15,18 @@
 //! `Authorization: Bearer` and dropped when the call returns. Nothing here
 //! logs, stores or relays it: a server's error text is relayed with any
 //! occurrence of it replaced.
+//!
+//! **One retry, for a listing only.** A listing whose handshake or
+//! `tools/list` gets no answer at all (the transport's `Unreachable`, before
+//! any of an answer was read) is made once more, on a new handshake, after
+//! [`RETRY_PAUSE`]; the retry is logged at info, and only the second failure
+//! is logged as unreachable and refused. Nothing else is retried: not a
+//! status the server answered (a 4xx, a 429 with its `Retry-After`, a 5xx),
+//! not an answer whose body was partly read, and never a `tools/call`, which
+//! may write. A listing reads only, so making it twice changes nothing.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
@@ -28,6 +38,42 @@ use self::transport::{McpHttpClient, McpReply, McpTransportError};
 
 const MAX_LIST_PAGES: usize = 50;
 const MAX_RELAYED_MESSAGE: usize = 1000;
+/// How long a listing waits before its one retry.
+const RETRY_PAUSE: Duration = Duration::from_millis(250);
+/// How much of a 5xx answer's JSON error body the log carries.
+const MAX_LOGGED_ERROR_BODY: usize = 200;
+
+/// Why one attempt failed: a transport error not yet logged or refused, so
+/// the caller can decide on a retry first, or a refusal already decided.
+enum Failure {
+    Transport(McpTransportError),
+    Refused(GatewayError),
+}
+
+impl From<GatewayError> for Failure {
+    fn from(err: GatewayError) -> Self {
+        Self::Refused(err)
+    }
+}
+
+impl Failure {
+    /// Whether this failure may be retried: no answer came at all.
+    fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Transport(McpTransportError::Unreachable(unreachable))
+                if !unreachable.body_partly_read
+        )
+    }
+
+    /// The refusal this failure amounts to, logging a transport error.
+    fn into_refusal(self, server: &RemoteMcpServer) -> GatewayError {
+        match self {
+            Self::Transport(err) => transport_refusal(server, &err),
+            Self::Refused(err) => err,
+        }
+    }
+}
 
 /// A remote tool as `tools/list` described it, under its exposed name.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,13 +137,32 @@ impl RemoteMcpEngine {
 
     /// The tools `server` shows the holder of `credential` (its list depends
     /// on the credential), named `<server>.<tool>`: one handshake, its pages
-    /// on it.
+    /// on it; made once more if it got no answer at all (the module's
+    /// "One retry").
     pub async fn list_tools(
         &self,
         server: &str,
         credential: &SensitiveString,
     ) -> Result<Vec<RemoteTool>, GatewayError> {
         let registered = self.server(server)?;
+        match self.list_once(registered, credential).await {
+            Err(failure) if failure.retryable() => {
+                tracing::info!(server = %registered.name, "remote MCP server retried once");
+                tokio::time::sleep(RETRY_PAUSE).await;
+                self.list_once(registered, credential)
+                    .await
+                    .map_err(|failure| failure.into_refusal(registered))
+            }
+            listed => listed.map_err(|failure| failure.into_refusal(registered)),
+        }
+    }
+
+    /// One listing: a handshake and the pages of `tools/list` on it.
+    async fn list_once(
+        &self,
+        registered: &RemoteMcpServer,
+        credential: &SensitiveString,
+    ) -> Result<Vec<RemoteTool>, Failure> {
         let mut handshake = self.handshake(registered, credential).await?;
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
@@ -154,7 +219,11 @@ impl RemoteMcpEngine {
         arguments: Value,
     ) -> Result<RemoteCallAnswer, GatewayError> {
         let registered = self.server(server)?;
-        let mut handshake = self.handshake(registered, credential).await?;
+        let refusal = |failure: Failure| failure.into_refusal(registered);
+        let mut handshake = self
+            .handshake(registered, credential)
+            .await
+            .map_err(refusal)?;
         let result = self
             .request(
                 registered,
@@ -163,7 +232,8 @@ impl RemoteMcpEngine {
                 "tools/call",
                 json!({ "name": tool, "arguments": arguments }),
             )
-            .await?;
+            .await
+            .map_err(refusal)?;
         Ok(RemoteCallAnswer {
             result,
             grounding: handshake.grounding,
@@ -188,7 +258,7 @@ impl RemoteMcpEngine {
         credential: &SensitiveString,
         method: &str,
         params: Value,
-    ) -> Result<Value, GatewayError> {
+    ) -> Result<Value, Failure> {
         let message = json!({
             "jsonrpc": "2.0",
             "id": handshake.next_id(),
@@ -205,8 +275,8 @@ impl RemoteMcpEngine {
                 &message,
             )
             .await
-            .map_err(|e| transport_refusal(server, &e))?;
-        answer(server, credential, reply)
+            .map_err(Failure::Transport)?;
+        Ok(answer(server, credential, reply)?)
     }
 
     /// `initialize` and `notifications/initialized`, for one call.
@@ -214,7 +284,7 @@ impl RemoteMcpEngine {
         &self,
         server: &RemoteMcpServer,
         credential: &SensitiveString,
-    ) -> Result<Handshake, GatewayError> {
+    ) -> Result<Handshake, Failure> {
         let initialize = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -232,7 +302,7 @@ impl RemoteMcpEngine {
             .client
             .send(&server.url, None, None, credential, &initialize)
             .await
-            .map_err(|e| transport_refusal(server, &e))?;
+            .map_err(Failure::Transport)?;
         let session_id = reply.session_id.clone();
         let result = answer(server, credential, reply)?;
         let version = result
@@ -248,7 +318,8 @@ impl RemoteMcpEngine {
             return Err(GatewayError::refused(
                 RefusalCode::ServiceUnavailable,
                 "This tool is not available right now.",
-            ));
+            )
+            .into());
         }
         let handshake = Handshake {
             session_id,
@@ -270,7 +341,7 @@ impl RemoteMcpEngine {
                 &initialized,
             )
             .await
-            .map_err(|e| transport_refusal(server, &e))?;
+            .map_err(Failure::Transport)?;
         if !(200..300).contains(&ack.status) {
             answer(server, credential, ack)?;
         }
@@ -307,7 +378,13 @@ fn answer(
         ));
     }
     if status >= 500 {
-        tracing::warn!(server = %server.name, status, "remote MCP server failed");
+        match reply.error_body.as_deref() {
+            Some(body) => {
+                let body = logged_error_body(body, credential);
+                tracing::warn!(server = %server.name, status, body = %body, "remote MCP server failed");
+            }
+            None => tracing::warn!(server = %server.name, status, "remote MCP server failed"),
+        }
         return Err(upstream_unavailable());
     }
     let message = reply.message.unwrap_or(Value::Null);
@@ -347,11 +424,13 @@ fn answer(
 }
 
 fn transport_refusal(server: &RemoteMcpServer, err: &McpTransportError) -> GatewayError {
+    let host = server.url.host_str().unwrap_or("none");
     match err {
         McpTransportError::AddressRefused(why) => {
             tracing::error!(
                 server = %server.name,
                 why = %why,
+                detail = %format!("host: {host}"),
                 "a registered MCP server's address is refused by the address rule"
             );
             GatewayError::refused(
@@ -359,8 +438,22 @@ fn transport_refusal(server: &RemoteMcpServer, err: &McpTransportError) -> Gatew
                 "This tool is not available right now.",
             )
         }
-        McpTransportError::Unreachable(why) | McpTransportError::Protocol(why) => {
-            tracing::warn!(server = %server.name, why = %why, "remote MCP server unreachable");
+        McpTransportError::Unreachable(unreachable) => {
+            tracing::warn!(
+                server = %server.name,
+                why = %unreachable.kind,
+                detail = %unreachable.detail,
+                "remote MCP server unreachable"
+            );
+            upstream_unavailable()
+        }
+        McpTransportError::Protocol(why) => {
+            tracing::warn!(
+                server = %server.name,
+                why = %why,
+                detail = %format!("host: {host}"),
+                "remote MCP server unreachable"
+            );
             upstream_unavailable()
         }
     }
@@ -371,6 +464,23 @@ fn upstream_unavailable() -> GatewayError {
         RefusalCode::UpstreamUnavailable,
         "A service this tool depends on did not answer. Try again in a moment.",
     )
+}
+
+/// The head of a 5xx answer's JSON error body, as logged: any echo of the
+/// credential replaced first, then cut to [`MAX_LOGGED_ERROR_BODY`] bytes at
+/// a character boundary.
+fn logged_error_body(body: &str, credential: &SensitiveString) -> String {
+    let secret = credential.expose();
+    let cleaned = if secret.is_empty() {
+        body.to_string()
+    } else {
+        body.replace(secret, "[redacted]")
+    };
+    let mut end = cleaned.len().min(MAX_LOGGED_ERROR_BODY);
+    while !cleaned.is_char_boundary(end) {
+        end -= 1;
+    }
+    cleaned[..end].to_string()
 }
 
 /// A server's own error text, as relayed to the caller: the credential, if

@@ -12,7 +12,9 @@
 //! redirects are not followed.
 //!
 //! The credential is a parameter of each send and is held nowhere here. No
-//! log line or error built here carries it, the URL, or a response body.
+//! log line or error built here carries it, a header value or the request
+//! body; of the URL only the host. Of a response body only a 5xx answer's
+//! JSON error text is kept, for the operator's log (see [`McpReply`]).
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -24,6 +26,8 @@ use crate::domain::SensitiveString;
 
 pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+/// How much of a 5xx answer's JSON error body is kept for the log.
+const MAX_ERROR_BODY: usize = 8 * 1024;
 
 /// Which addresses the client may dial.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,16 +39,31 @@ pub enum AddressPolicy {
     LoopbackForTests,
 }
 
-/// Why a send produced no JSON-RPC answer. None of these carries the URL, a
-/// header or a body.
+/// Why a send produced no JSON-RPC answer. None of these carries a header,
+/// a body, or any part of the URL but its host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpTransportError {
     /// The address rule refused the server's address.
     AddressRefused(String),
     /// The connection failed or timed out.
-    Unreachable(String),
+    Unreachable(Unreachable),
     /// The server answered something that is not an MCP answer.
     Protocol(String),
+}
+
+/// A request that got no answer, and why, as far as the HTTP client can say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unreachable {
+    /// The short kind: "timed out", "could not connect" or "request failed".
+    pub kind: &'static str,
+    /// reqwest's description of the error with its source chain joined by
+    /// ": ", the error predicates that hold, and the server's host, e.g.
+    /// `error sending request: client error (SendRequest): connection closed
+    /// before message completed (is: none; host: cortex.page)`.
+    pub detail: String,
+    /// Whether the failure came while the answer's body was being read, after
+    /// the server had begun to answer.
+    pub body_partly_read: bool,
 }
 
 /// What a POST answered.
@@ -59,6 +78,10 @@ pub struct McpReply {
     /// JSON-RPC error object a non-2xx body held; `None` for a 202 or a body
     /// that held neither.
     pub message: Option<Value>,
+    /// A 5xx answer's body as text (at most [`MAX_ERROR_BODY`] bytes), kept
+    /// only when it is a JSON object with an `error` or a `message` field;
+    /// the caller logs its head with any echo of the credential replaced.
+    pub error_body: Option<String>,
 }
 
 #[derive(Clone)]
@@ -150,7 +173,10 @@ impl McpHttpClient {
         if let Some(id) = session_id {
             request = request.header("MCP-Session-Id", id);
         }
-        let response = request.send().await.map_err(transport_error)?;
+        let response = request
+            .send()
+            .await
+            .map_err(|e| transport_error(url, e, false))?;
 
         let status = response.status().as_u16();
         let header = |name: &str| {
@@ -167,16 +193,22 @@ impl McpHttpClient {
             .unwrap_or(false);
         let request_id = message.get("id").cloned();
 
+        let mut error_body = None;
         let message = if status == 202 {
             None
         } else if event_stream {
-            read_event_stream(response, request_id.as_ref()).await?
+            read_event_stream(url, response, request_id.as_ref()).await?
         } else {
-            let body = read_capped(response).await?;
+            let body = read_capped(url, response).await?;
             if body.is_empty() {
                 None
             } else {
-                serde_json::from_slice::<Value>(&body).ok()
+                let parsed = serde_json::from_slice::<Value>(&body).ok();
+                if status >= 500 && is_json_error(parsed.as_ref()) {
+                    let kept = &body[..body.len().min(MAX_ERROR_BODY)];
+                    error_body = Some(String::from_utf8_lossy(kept).into_owned());
+                }
+                parsed
             }
         };
         Ok(McpReply {
@@ -184,11 +216,24 @@ impl McpHttpClient {
             session_id: session,
             retry_after,
             message,
+            error_body,
         })
     }
 }
 
-fn transport_error(err: reqwest::Error) -> McpTransportError {
+/// Whether a body is a JSON object carrying an `error` or a `message` field.
+fn is_json_error(body: Option<&Value>) -> bool {
+    body.and_then(Value::as_object)
+        .is_some_and(|object| object.contains_key("error") || object.contains_key("message"))
+}
+
+/// The unreachable error `err` amounts to. Its description is taken with the
+/// URL removed, since reqwest prints the whole URL; only the host is added.
+fn transport_error(
+    url: &url::Url,
+    err: reqwest::Error,
+    body_partly_read: bool,
+) -> McpTransportError {
     let kind = if err.is_timeout() {
         "timed out"
     } else if err.is_connect() {
@@ -196,12 +241,47 @@ fn transport_error(err: reqwest::Error) -> McpTransportError {
     } else {
         "request failed"
     };
-    McpTransportError::Unreachable(kind.to_string())
+    let err = err.without_url();
+    let mut chain = err.to_string();
+    let mut source = std::error::Error::source(&err);
+    while let Some(cause) = source {
+        chain.push_str(": ");
+        chain.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    let predicates: Vec<&str> = [
+        (err.is_redirect(), "redirect"),
+        (err.is_body(), "body"),
+        (err.is_decode(), "decode"),
+        (err.is_connect(), "connect"),
+        (err.is_timeout(), "timeout"),
+    ]
+    .into_iter()
+    .filter_map(|(holds, word)| holds.then_some(word))
+    .collect();
+    let predicates = if predicates.is_empty() {
+        "none".to_string()
+    } else {
+        predicates.join(", ")
+    };
+    let host = url.host_str().unwrap_or("none");
+    McpTransportError::Unreachable(Unreachable {
+        kind,
+        detail: format!("{chain} (is: {predicates}; host: {host})"),
+        body_partly_read,
+    })
 }
 
-async fn read_capped(mut response: reqwest::Response) -> Result<Vec<u8>, McpTransportError> {
+async fn read_capped(
+    url: &url::Url,
+    mut response: reqwest::Response,
+) -> Result<Vec<u8>, McpTransportError> {
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| transport_error(url, e, true))?
+    {
         body.extend_from_slice(&chunk);
         if body.len() > MAX_RESPONSE_BYTES {
             return Err(McpTransportError::Protocol(
@@ -215,6 +295,7 @@ async fn read_capped(mut response: reqwest::Response) -> Result<Vec<u8>, McpTran
 /// Read an SSE answer until the JSON-RPC response to `request_id` arrives.
 /// Requests and notifications the server sends before it are skipped.
 async fn read_event_stream(
+    url: &url::Url,
     mut response: reqwest::Response,
     request_id: Option<&Value>,
 ) -> Result<Option<Value>, McpTransportError> {
@@ -228,7 +309,11 @@ async fn read_event_stream(
                 return Ok(Some(found));
             }
         }
-        match response.chunk().await.map_err(transport_error)? {
+        match response
+            .chunk()
+            .await
+            .map_err(|e| transport_error(url, e, true))?
+        {
             Some(chunk) => {
                 read += chunk.len();
                 if read > MAX_RESPONSE_BYTES {

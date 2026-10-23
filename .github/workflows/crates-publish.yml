@@ -69,6 +69,15 @@ jobs:
             cp ../aegis-proto/proto/seal_gateway.proto proto-vendor/aegis/seal_gateway.proto
           fi
 
+      # Runs here, on a tag, and not in ci.yml: `cargo package` rewrites the path
+      # dependency on aegis-proto into a registry dependency and needs that exact
+      # version on crates.io, which is true only after aegis-proto's own tag has
+      # published (it is always tagged first). On a push to main it was red for a
+      # reason unrelated to this repository (run 39996289763). CI builds against
+      # the sibling checkout; crates.io is for public releases (Jeshua, 2026-10-23).
+      - name: Verify package includes all required files
+        run: cargo package --no-verify --locked --allow-dirty
+
       - name: Verify crate builds
         run: cargo build --locked
 

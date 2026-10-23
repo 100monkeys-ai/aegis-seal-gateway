@@ -124,6 +124,28 @@ jobs:
           if [ ! -f proto-vendor/aegis/seal_gateway.proto ]; then
             cp ../aegis-proto/proto/seal_gateway.proto proto-vendor/aegis/seal_gateway.proto
           fi
+      # `cargo package` rewrites the path dependency on aegis-proto into a registry
+      # dependency and refuses unless that exact version is already on crates.io,
+      # so on every push between a version bump and its public release the job was
+      # red for a reason unrelated to this repository (run 39996289763 at 1.2.0-beta).
+      # CI builds against the sibling checkout above; crates.io is for public
+      # releases only (Jeshua, 2026-10-23). `--list` prints the archive that would
+      # be produced without resolving dependencies, and the required files are
+      # asserted by name. The real `cargo publish` runs in crates-publish.yml on a tag.
       - name: Verify package includes all required files
         working-directory: aegis-seal-gateway
-        run: cargo package --no-verify --locked --allow-dirty
+        run: |
+          cargo package --list --no-verify --allow-dirty > package-files.txt
+          status=0
+          for f in Cargo.toml Cargo.lock README.md LICENSE build.rs src/main.rs proto-vendor/aegis/seal_gateway.proto; do
+            if grep -qx "$f" package-files.txt; then
+              echo "ok      $f"
+            else
+              echo "MISSING $f"; status=1
+            fi
+          done
+          if [ "$(grep -c '^migrations/' package-files.txt)" -eq 0 ]; then
+            echo "MISSING migrations/**"; status=1
+          fi
+          rm -f package-files.txt
+          exit $status

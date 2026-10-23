@@ -52,12 +52,12 @@ CREATE TABLE IF NOT EXISTS security_contexts (
   tenant_id TEXT
 );
 
-CREATE TABLE seen_jtis (
+CREATE TABLE IF NOT EXISTS seen_jtis (
   jti TEXT PRIMARY KEY,
   expires_at TEXT NOT NULL
 );
 
-CREATE TABLE gateway_events (
+CREATE TABLE IF NOT EXISTS gateway_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_type TEXT NOT NULL,
   payload TEXT NOT NULL,

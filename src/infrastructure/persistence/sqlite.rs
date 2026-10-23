@@ -557,3 +557,29 @@ impl JtiRepository for SqliteStore {
         Ok(result.rows_affected())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SqliteStore;
+
+    /// `SqliteStore::new` executes `schema.sql` on every connect, so the schema
+    /// must apply cleanly to a database an earlier process already created.
+    /// Observed 2026-10-23 on an `aegis init` stack whose SQLite volume survived
+    /// an upgrade: the gateway crash-looped on "table seen_jtis already exists".
+    #[tokio::test]
+    async fn new_connects_twice_to_the_same_database_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "aegis-seal-gateway-sqlite-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let url = format!("sqlite://{}", dir.join("gateway.db").display());
+
+        SqliteStore::new(&url)
+            .await
+            .expect("the first connect creates the schema");
+        let second = SqliteStore::new(&url).await;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        second.expect("the second connect reuses the schema it finds");
+    }
+}
